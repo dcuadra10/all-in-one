@@ -94,9 +94,21 @@ async function logPurchaseToSheet(username, resource, resourceAmount, cost) {
       sheet = await doc.addSheet({ title: sheetTitle, headerValues: ['Timestamp', 'User', 'Gold', 'Wood', 'Food', 'Stone', 'HP Cost'] });
     } else {
       // If sheet exists, ensure headers are loaded and correct
-      await sheet.loadHeaderRow();
-      if (sheet.headerValues.length === 0) {
-        await sheet.setHeaderRow(['Timestamp', 'User', 'Gold', 'Wood', 'Food', 'Stone', 'HP Cost']);
+      try {
+        await sheet.loadHeaderRow();
+        // Check if headers are empty or incorrect
+        if (!sheet.headerValues || sheet.headerValues.length === 0) {
+          console.log(`Sheet "${sheetTitle}" has no headers. Setting headers now...`);
+          await sheet.setHeaderRow(['Timestamp', 'User', 'Gold', 'Wood', 'Food', 'Stone', 'HP Cost']);
+        }
+      } catch (headerError) {
+        // If loading header row fails (sheet is empty), set headers
+        if (headerError.message.includes('No values in the header row') || headerError.message.includes('header')) {
+          console.log(`Sheet "${sheetTitle}" has no headers. Setting headers now...`);
+          await sheet.setHeaderRow(['Timestamp', 'User', 'Gold', 'Wood', 'Food', 'Stone', 'HP Cost']);
+        } else {
+          throw headerError; // Re-throw if it's a different error
+        }
       }
     }
 
