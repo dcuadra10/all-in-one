@@ -67,6 +67,61 @@ async function logActivity(title, message, color = 'Blue') {
   }
 }
 
+// --- Google Sheets Reset Function ---
+async function resetGoogleSheet() {
+  const { GOOGLE_SHEET_ID, GOOGLE_SERVICE_ACCOUNT_EMAIL, GOOGLE_PRIVATE_KEY } = process.env;
+
+  if (!GOOGLE_SHEET_ID || !GOOGLE_SERVICE_ACCOUNT_EMAIL || !GOOGLE_PRIVATE_KEY) {
+    console.log('Google Sheets credentials not configured. Skipping sheet reset.');
+    return { success: false, message: 'Google Sheets credentials not configured' };
+  }
+
+  try {
+    const jwt = new JWT({
+      email: GOOGLE_SERVICE_ACCOUNT_EMAIL,
+      key: GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+      scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+    });
+
+    const doc = new GoogleSpreadsheet(GOOGLE_SHEET_ID, jwt);
+    await doc.loadInfo();
+    
+    const sheetTitle = 'Purchases';
+    let sheet = doc.sheetsByTitle[sheetTitle];
+
+    if (!sheet) {
+      console.log(`Sheet "${sheetTitle}" not found. No need to reset.`);
+      return { success: true, message: 'Sheet does not exist, no reset needed' };
+    }
+
+    // Get all rows
+    const rows = await sheet.getRows();
+    const rowCount = rows.length;
+    
+    // Delete all rows
+    for (const row of rows) {
+      await row.delete();
+    }
+    
+    // Ensure headers are set
+    try {
+      await sheet.loadHeaderRow();
+      if (!sheet.headerValues || sheet.headerValues.length === 0) {
+        await sheet.setHeaderRow(['Timestamp', 'User', 'Gold', 'Wood', 'Food', 'Stone', 'HP Cost']);
+      }
+    } catch (headerError) {
+      // If loading header row fails, set headers
+      await sheet.setHeaderRow(['Timestamp', 'User', 'Gold', 'Wood', 'Food', 'Stone', 'HP Cost']);
+    }
+    
+    console.log(`✅ Reset Google Sheet "${sheetTitle}": Deleted ${rowCount} rows`);
+    return { success: true, message: `Reset Google Sheet: Deleted ${rowCount} rows` };
+  } catch (error) {
+    console.error('Error resetting Google Sheet:', error);
+    return { success: false, message: error.message };
+  }
+}
+
 // --- Google Sheets Logging Function ---
 async function logPurchaseToSheet(username, resource, resourceAmount, cost) {
   const { GOOGLE_SHEET_ID, GOOGLE_SERVICE_ACCOUNT_EMAIL, GOOGLE_PRIVATE_KEY } = process.env;
@@ -875,9 +930,19 @@ client.on('interactionCreate', async interaction => {
         `, [interaction.guildId]);
         console.log(`✅ Reset server pool to 100,000`);
         
+        // Reset Google Sheet
+        const sheetResetResult = await resetGoogleSheet();
+        if (sheetResetResult.success) {
+          console.log(`✅ ${sheetResetResult.message}`);
+        } else {
+          console.log(`⚠️ Google Sheet reset failed: ${sheetResetResult.message}`);
+        }
+        
         console.log('🎉 All data reset completed successfully!');
-        await interaction.editReply({ content: '✅ **All data has been reset successfully!**\n\n- All user balances: **0** 💰\n- All resources (Gold, Wood, Food, Stone): **0**\n- All message counts: **0**\n- All voice times: **0**\n- All invites: **0**\n- All boosts: **0**\n- Server pool: **100,000** 💰\n- Invite tracking: **Cleared**' });
-        logActivity('🔄 Admin Reset', `<@${interaction.user.id}> reset ALL user data (balances, stats, resources).`, 'Red');
+        const resetMessage = '✅ **All data has been reset successfully!**\n\n- All user balances: **0** 💰\n- All resources (Gold, Wood, Food, Stone): **0**\n- All message counts: **0**\n- All voice times: **0**\n- All invites: **0**\n- All boosts: **0**\n- Server pool: **100,000** 💰\n- Invite tracking: **Cleared**' + 
+          (sheetResetResult.success ? '\n- Google Sheet: **Reset** ✅' : '\n- Google Sheet: **Reset failed** ⚠️');
+        await interaction.editReply({ content: resetMessage });
+        logActivity('🔄 Admin Reset', `<@${interaction.user.id}> reset ALL user data (balances, stats, resources${sheetResetResult.success ? ', Google Sheet' : ''}).`, 'Red');
       } catch (error) {
         console.error('❌ Error resetting data:', error);
         await interaction.editReply({ content: `❌ Error resetting data: ${error.message}\n\nPlease check the console for more details.` });
