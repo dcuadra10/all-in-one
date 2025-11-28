@@ -294,10 +294,29 @@ client.on('guildMemberAdd', async member => {
     cachedInvites.set(invite.code, invite.uses);
   });
   if (inviterId && inviterId !== member.id) { // avoid self
-    await db.query('INSERT INTO users (id) VALUES ($1) ON CONFLICT (id) DO NOTHING', [inviterId]);
-    await db.query('UPDATE users SET balance = balance + 20 WHERE id = $1', [inviterId]);
-    await db.query('INSERT INTO invites (user_id, invites) VALUES ($1, 1) ON CONFLICT (user_id) DO UPDATE SET invites = invites.invites + 1', [inviterId]);
-    logActivity('💌 Invite Reward', `<@${inviterId}> received **20** Sovereign Pounds for inviting ${member.user.tag}.`, 'Green');
+    // Check if this member was already invited by this inviter before
+    const checkResult = await safeQuery(
+      'SELECT * FROM invited_members WHERE inviter_id = $1 AND invited_member_id = $2',
+      [inviterId, member.id]
+    );
+    
+    // Only give reward if this is the first time this member was invited by this inviter
+    if (!checkResult.rows || checkResult.rows.length === 0) {
+      await db.query('INSERT INTO users (id) VALUES ($1) ON CONFLICT (id) DO NOTHING', [inviterId]);
+      await db.query('UPDATE users SET balance = balance + 20 WHERE id = $1', [inviterId]);
+      await db.query('INSERT INTO invites (user_id, invites) VALUES ($1, 1) ON CONFLICT (user_id) DO UPDATE SET invites = invites.invites + 1', [inviterId]);
+      
+      // Record that this member was invited by this inviter
+      await db.query(
+        'INSERT INTO invited_members (inviter_id, invited_member_id) VALUES ($1, $2) ON CONFLICT (inviter_id, invited_member_id) DO NOTHING',
+        [inviterId, member.id]
+      );
+      
+      logActivity('💌 Invite Reward', `<@${inviterId}> received **20** Sovereign Pounds for inviting ${member.user.tag}.`, 'Green');
+    } else {
+      // Member was already invited before, no reward
+      console.log(`Member ${member.user.tag} (${member.id}) was already invited by ${inviterId} before. No duplicate reward.`);
+    }
   }
 });
 

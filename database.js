@@ -52,6 +52,16 @@ async function initializeDatabase() {
       )
     `);
 
+    // Track invited members to prevent duplicate rewards
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS invited_members (
+        inviter_id TEXT NOT NULL,
+        invited_member_id TEXT NOT NULL,
+        first_invited_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (inviter_id, invited_member_id)
+      )
+    `);
+
     // Boosts
     await client.query(`
       CREATE TABLE IF NOT EXISTS boosts (
