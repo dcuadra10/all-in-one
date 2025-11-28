@@ -229,18 +229,27 @@ client.on('guildMemberAdd', async member => {
     if (welcomeChannelId) {
       const welcomeChannel = await guild.channels.fetch(welcomeChannelId);
       if (welcomeChannel && welcomeChannel.isTextBased()) {
-        const welcomeMessage = `✨ **Welcome To The Sovereign Empire** ✨\n{user} has entered the Project!!!⠀⠀\n⠀⠀⠀⠀⠀\n📜\n Check out ⁠📖〢ɪɴꜰᴏʀᴍᴀᴛɪᴏɴ or ⁠🔗〢ᴜꜱᴇꜰᴜʟㆍʟɪɴᴋꜱ to get to know the project more.\n🔐\n Head to ⁠☑️〢ᴠᴇʀɪꜰɪᴄᴀᴛɪᴏɴ to unlock the server.\n💬\n Need help or have questions? Reach out to the staff in ⁠👮🏼〢ᴛɪᴄᴋᴇᴛᴇʀ -Remember to create your ticket with the staff.`.replace('{user}', `<@${member.id}>`);
+        const welcomeEmbed = new EmbedBuilder()
+          .setTitle('✨ Welcome To The Sovereign Empire ✨')
+          .setDescription(`<@${member.id}> has entered the Project!!!⠀⠀\n\n📜\nCheck out ⁠📖〢ɪɴꜰᴏʀᴍᴀᴛɪᴏɴ or ⁠🔗〢ᴜꜱᴇꜰᴜʟㆍʟɪɴᴋꜱ to get to know the project more.\n\n🔐\nHead to ⁠☑️〢ᴠᴇʀɪꜰɪᴄᴀᴛɪᴏɴ to unlock the server.\n\n💬\nNeed help or have questions? Reach out to the staff in ⁠👮🏼〢ᴛɪᴄᴋᴇᴛᴇʀ -Remember to create your ticket with the staff.`)
+          .setColor('Gold')
+          .setTimestamp()
+          .setThumbnail(member.user.displayAvatarURL({ dynamic: true }));
         
         // Try to attach the welcome video
         const videoPath = path.join(__dirname, 'Welcome video.gif');
         
         if (fs.existsSync(videoPath)) {
           await welcomeChannel.send({
-            content: welcomeMessage,
-            files: [videoPath]
+            embeds: [welcomeEmbed],
+            files: [{
+              attachment: videoPath,
+              name: 'welcome.gif'
+            }]
           });
         } else {
-          await welcomeChannel.send(welcomeMessage);
+          console.log('Welcome video not found at:', videoPath);
+          await welcomeChannel.send({ embeds: [welcomeEmbed] });
         }
       }
     }
