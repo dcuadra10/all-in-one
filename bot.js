@@ -795,6 +795,70 @@ client.on('interactionCreate', async interaction => {
       await db.query('UPDATE users SET balance = $1 WHERE id = $2', [newBalance, targetUser.id]);
       await interaction.editReply({ content: `✅ Successfully took **${amountTaken.toLocaleString('en-US')}** 💰 from ${targetUser}. Their new balance is **${newBalance.toLocaleString('en-US')}** 💰.` });
       logActivity('💸 Admin Take', `<@${interaction.user.id}> took **${amountTaken.toLocaleString('en-US')}** 💰 from ${targetUser}. The amount was added to the server pool.`, 'Orange');
+    } else if (commandName === 'reset-all') {
+      await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
+      const adminIds = (process.env.ADMIN_IDS || '').split(',');
+      if (!adminIds.includes(interaction.user.id)) {
+        return await interaction.editReply({ content: '🚫 You do not have permission to use this command.' });
+      }
+
+      try {
+        // Reset user balances and resources
+        await db.query(`
+          UPDATE users 
+          SET balance = 0, 
+              gold = 0, 
+              wood = 0, 
+              food = 0, 
+              stone = 0,
+              daily_streak = 0,
+              last_daily = NULL
+        `);
+        
+        // Reset message counts
+        await db.query(`
+          UPDATE message_counts 
+          SET count = 0, 
+              rewarded_messages = 0
+        `);
+        
+        // Reset voice times
+        await db.query(`
+          UPDATE voice_times 
+          SET minutes = 0, 
+              rewarded_minutes = 0
+        `);
+        
+        // Reset invites
+        await db.query(`
+          UPDATE invites 
+          SET invites = 0
+        `);
+        
+        // Reset boosts
+        await db.query(`
+          UPDATE boosts 
+          SET boosts = 0
+        `);
+        
+        // Reset invited_members tracking
+        await db.query(`
+          DELETE FROM invited_members
+        `);
+        
+        // Reset server pool to default
+        await db.query(`
+          UPDATE server_stats 
+          SET pool_balance = 100000
+          WHERE id = $1
+        `, [interaction.guildId]);
+        
+        await interaction.editReply({ content: '✅ **All data has been reset successfully!**\n\n- All user balances: **0** 💰\n- All resources (Gold, Wood, Food, Stone): **0**\n- All message counts: **0**\n- All voice times: **0**\n- All invites: **0**\n- All boosts: **0**\n- Server pool: **100,000** 💰\n- Invite tracking: **Cleared**' });
+        logActivity('🔄 Admin Reset', `<@${interaction.user.id}> reset ALL user data (balances, stats, resources).`, 'Red');
+      } catch (error) {
+        console.error('Error resetting data:', error);
+        await interaction.editReply({ content: '❌ Error resetting data. Please check the console for details.' });
+      }
     } else if (commandName === 'giveaway') {
       const adminIds = (process.env.ADMIN_IDS || '').split(',');
       if (!adminIds.includes(interaction.user.id)) {

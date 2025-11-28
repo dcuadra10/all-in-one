@@ -89,6 +89,10 @@ const commands = [
       option.setName('ping_role')
         .setDescription('Role to ping when giveaway is created (optional)')
         .setRequired(false)),
+
+  new SlashCommandBuilder()
+    .setName('reset-all')
+    .setDescription('Admin: Reset all user balances, stats, and resources (IRREVERSIBLE)'),
 ].map(command => command.toJSON());
 
 const rest = new REST({ version: '9' }).setToken(process.env.DISCORD_TOKEN);
