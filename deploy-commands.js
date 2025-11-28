@@ -11,22 +11,6 @@ const commands = [
   new SlashCommandBuilder()
     .setName('shop')
     .setDescription('View the shop to exchange Sovereign Pounds for resources'),
-
-  new SlashCommandBuilder()
-    .setName('buy')
-    .setDescription('Buy a resource from the shop')
-    .addStringOption(option =>
-      option.setName('resource')
-        .setDescription('The resource to buy')
-        .setRequired(true)
-        .addChoices(
-          { name: 'Gold', value: 'gold' },
-          { name: 'Wood', value: 'wood' },
-          { name: 'Food', value: 'food' },
-          { name: 'Stone', value: 'stone' }
-        )
-    )
-  ,
   new SlashCommandBuilder()
     .setName('help')
     .setDescription('Shows how to earn currency and lists all commands'),

@@ -402,28 +402,43 @@ client.on('interactionCreate', async interaction => {
         .setFooter({ text: 'Note: Resources (RSS) will be granted when the temple is conquered. If the project is canceled, all resources and currency will be lost.' });
       await interaction.editReply({ embeds: [embed] });
     } else if (commandName === 'shop') {
-    const embed = new EmbedBuilder()
-      .setTitle('🛍️ Heavenly Shop')
-      .setDescription('Exchange your Sovereign Pounds for resources. Use `/buy` to purchase.\n\n- **🪙 Gold:** 10 HP for 50,000\n- **🪵 Wood:** 10 HP for 150,000\n- **🌽 Food:** 10 HP for 150,000\n- **🪨 Stone:** 10 HP for 112,000');
-    interaction.reply({ embeds: [embed] });
-    } else if (commandName === 'buy') {
-    const resource = interaction.options.getString('resource');
+      try {
+        const embed = new EmbedBuilder()
+          .setTitle('🛍️ Sovereign Shop')
+          .setDescription('Click a button below to purchase resources with your Sovereign Pounds.\n\n- **🪙 Gold:** 10 HP for 50,000\n- **🪵 Wood:** 10 HP for 150,000\n- **🌽 Food:** 10 HP for 150,000\n- **🪨 Stone:** 10 HP for 112,000');
 
-    const modal = new ModalBuilder()
-      .setCustomId(`buy_modal_${resource}`)
-      .setTitle(`Buy ${resource.charAt(0).toUpperCase() + resource.slice(1)}`);
+        const goldButton = new ButtonBuilder()
+          .setCustomId('buy_gold')
+          .setLabel('🪙 Buy Gold')
+          .setStyle(ButtonStyle.Primary);
 
-    const quantityInput = new TextInputBuilder()
-      .setCustomId('hp_quantity_input')
-      .setLabel("How many HP do you want to spend?")
-      .setPlaceholder('e.g., 10, 5.5, 100k, 1.5m')
-      .setStyle(TextInputStyle.Short)
-      .setRequired(true);
+        const woodButton = new ButtonBuilder()
+          .setCustomId('buy_wood')
+          .setLabel('🪵 Buy Wood')
+          .setStyle(ButtonStyle.Primary);
 
-    const actionRow = new ActionRowBuilder().addComponents(quantityInput);
-    modal.addComponents(actionRow);
+        const foodButton = new ButtonBuilder()
+          .setCustomId('buy_food')
+          .setLabel('🌽 Buy Food')
+          .setStyle(ButtonStyle.Primary);
 
-    await interaction.showModal(modal);
+        const stoneButton = new ButtonBuilder()
+          .setCustomId('buy_stone')
+          .setLabel('🪨 Buy Stone')
+          .setStyle(ButtonStyle.Primary);
+
+        const row1 = new ActionRowBuilder().addComponents(goldButton, woodButton);
+        const row2 = new ActionRowBuilder().addComponents(foodButton, stoneButton);
+
+        await interaction.reply({ embeds: [embed], components: [row1, row2] });
+      } catch (error) {
+        console.error('Error in shop command:', error);
+        try {
+          await interaction.reply({ content: '❌ An error occurred while opening the shop. Please try again.', ephemeral: true });
+        } catch (replyError) {
+          console.error('Error replying to shop command:', replyError);
+        }
+      }
 
     } else if (commandName === 'help') {
       await interaction.deferReply();
@@ -441,8 +456,7 @@ client.on('interactionCreate', async interaction => {
           {
             name: '🤖 User Commands',
             value: '`/balance`: Check your balance and resource inventory.\n' +
-                   '`/shop`: View the items available for purchase.\n' +
-                   '`/buy <resource>`: Purchase resources from the shop.\n' +
+                   '`/shop`: View and purchase resources from the shop.\n' +
                    '`/daily`: Claim your daily reward with a streak bonus.\n' +
                    '`/stats [user]`: Check your contribution stats.\n' +
                    '`/leaderboard`: See the top 10 richest users and your rank.\n' +
@@ -894,7 +908,26 @@ client.on('interactionCreate', async interaction => {
       logActivity('🎁 Giveaway Created', `<@${interaction.user.id}> created a giveaway: **${totalPrize.toLocaleString('en-US')} 💰** total prize (${entryCost.toLocaleString('en-US')} 💰 entry, ${winnerCount} winner(s))`, 'Gold');
     }
   } else if (interaction.isButton()) { // Handle Button Clicks
-    if (interaction.customId.startsWith('join_giveaway_')) {
+    if (interaction.customId.startsWith('buy_') && ['buy_gold', 'buy_wood', 'buy_food', 'buy_stone'].includes(interaction.customId)) {
+      // Handle shop buy buttons - show modal
+      const resource = interaction.customId.split('_')[1];
+      
+      const modal = new ModalBuilder()
+        .setCustomId(`buy_modal_${resource}`)
+        .setTitle(`Buy ${resource.charAt(0).toUpperCase() + resource.slice(1)}`);
+
+      const quantityInput = new TextInputBuilder()
+        .setCustomId('hp_quantity_input')
+        .setLabel("How many HP do you want to spend?")
+        .setPlaceholder('e.g., 10, 5.5, 100k, 1.5m')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true);
+
+      const actionRow = new ActionRowBuilder().addComponents(quantityInput);
+      modal.addComponents(actionRow);
+
+      await interaction.showModal(modal);
+    } else if (interaction.customId.startsWith('join_giveaway_')) {
       await interaction.deferReply({ flags: [MessageFlags.Ephemeral] }); // Don't delete the message
     } else {
       await interaction.deferUpdate(); // Acknowledge the button click immediately
