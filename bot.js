@@ -284,8 +284,27 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
     const guild = newMember.guild;
     const currentBoosts = guild.premiumSubscriptionCount;
 
-    const { rows } = await db.query('SELECT rewarded_boosts FROM server_stats WHERE id = $1', [guild.id]);
-      const rewardedBoosts = rows[0]?.rewarded_boosts || 0;
+    const result = await db.query('SELECT rewarded_boosts FROM server_stats WHERE id = $1', [guild.id]);
+    if (!result || !result.rows || result.rows.length === 0) {
+      // Initialize server_stats if it doesn't exist
+      await db.query('INSERT INTO server_stats (id, pool_balance, rewarded_boosts) VALUES ($1, 100000, 0) ON CONFLICT (id) DO NOTHING', [guild.id]);
+      const retryResult = await db.query('SELECT rewarded_boosts FROM server_stats WHERE id = $1', [guild.id]);
+      if (!retryResult || !retryResult.rows || retryResult.rows.length === 0) {
+        return; // Can't proceed without server_stats
+      }
+      const rewardedBoosts = retryResult.rows[0]?.rewarded_boosts || 0;
+      const newBoosts = currentBoosts - rewardedBoosts;
+      if (newBoosts > 0) {
+        const reward = newBoosts * 500;
+        await db.query('INSERT INTO users (id) VALUES ($1) ON CONFLICT (id) DO NOTHING', [newMember.id]);
+        await db.query('UPDATE users SET balance = balance + $1 WHERE id = $2', [reward, newMember.id]);
+        await db.query('INSERT INTO boosts (user_id, boosts) VALUES ($1, $2) ON CONFLICT (user_id) DO UPDATE SET boosts = boosts.boosts + $2', [newMember.id, newBoosts]);
+        await db.query('INSERT INTO server_stats (id, rewarded_boosts) VALUES ($1, $2) ON CONFLICT (id) DO UPDATE SET rewarded_boosts = $2', [guild.id, currentBoosts]);
+        logActivity('🚀 Server Boost Reward', `<@${newMember.id}> received **${reward}** Sovereign Pounds for **${newBoosts}** new boost(s).`, 'Gold');
+      }
+      return;
+    }
+    const rewardedBoosts = result.rows[0]?.rewarded_boosts || 0;
       const newBoosts = currentBoosts - rewardedBoosts;
 
       if (newBoosts > 0) {
@@ -564,20 +583,29 @@ client.on('interactionCreate', async interaction => {
     // Defer the reply and make it ephemeral
     await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
     
-    // Ensure server_stats record exists
-    await db.query('INSERT INTO server_stats (id, pool_balance) VALUES ($1, 100000) ON CONFLICT (id) DO NOTHING', [interaction.guildId]);
-    
-    const { rows } = await db.query('SELECT pool_balance FROM server_stats WHERE id = $1', [interaction.guildId]);
-    if (!rows || rows.length === 0) {
-      return await interaction.editReply({ content: '❌ Error: Could not access server pool. Please try again.' });
+    try {
+      // Ensure server_stats record exists
+      await db.query('INSERT INTO server_stats (id, pool_balance) VALUES ($1, 100000) ON CONFLICT (id) DO NOTHING', [interaction.guildId]);
+      
+      const result = await db.query('SELECT pool_balance FROM server_stats WHERE id = $1', [interaction.guildId]);
+      if (!result || !result.rows || result.rows.length === 0) {
+        return await interaction.editReply({ content: '❌ Error: Could not access server pool. Please try again.' });
+      }
+      
+      const poolBalance = result.rows[0]?.pool_balance || 0;
+      const embed = new EmbedBuilder()
+        .setTitle('🏦 Server Pool Balance')
+        .setDescription(`The server pool currently holds **${poolBalance.toLocaleString('en-US')}** 💰.`)
+        .setColor('Aqua');
+      await interaction.editReply({ embeds: [embed] });
+    } catch (error) {
+      console.error('Error checking pool balance:', error);
+      try {
+        await interaction.editReply({ content: `❌ Error checking pool balance: ${error.message}. Please check the console for more details.` });
+      } catch (replyError) {
+        console.error('Error replying to interaction:', replyError);
+      }
     }
-    
-    const poolBalance = rows[0]?.pool_balance || 0;
-    const embed = new EmbedBuilder()
-      .setTitle('🏦 Server Pool Balance')
-      .setDescription(`The server pool currently holds **${poolBalance.toLocaleString('en-US')}** 💰.`)
-      .setColor('Aqua');
-    await interaction.editReply({ embeds: [embed] });
     } else if (commandName === 'give') {
       try {
         await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
@@ -781,15 +809,15 @@ client.on('interactionCreate', async interaction => {
       await db.query('INSERT INTO server_stats (id, pool_balance) VALUES ($1, 100000) ON CONFLICT (id) DO NOTHING', [interaction.guildId]);
       
       // Check if server pool has enough funds
-      const { rows } = await db.query('SELECT pool_balance FROM server_stats WHERE id = $1', [interaction.guildId]);
-      if (!rows || rows.length === 0) {
+      const result = await db.query('SELECT pool_balance FROM server_stats WHERE id = $1', [interaction.guildId]);
+      if (!result || !result.rows || result.rows.length === 0) {
         return interaction.reply({ 
           content: '❌ Error: Could not access server pool. Please try again.', 
           flags: [MessageFlags.Ephemeral] 
         });
       }
       
-      const poolBalance = rows[0]?.pool_balance || 0;
+      const poolBalance = result.rows[0]?.pool_balance || 0;
 
       if (poolBalance < totalPrize) {
         return interaction.reply({ 
