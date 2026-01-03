@@ -137,6 +137,37 @@ async function initializeDatabase() {
     // Server Growth Tracking
 
 
+    // Ticket System Tables
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS ticket_categories (
+        id SERIAL PRIMARY KEY,
+        guild_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        emoji TEXT,
+        staff_role_id TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS ticket_panels (
+        guild_id TEXT PRIMARY KEY,
+        channel_id TEXT NOT NULL,
+        message_id TEXT NOT NULL
+      )
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS tickets (
+        channel_id TEXT PRIMARY KEY,
+        guild_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        category_id INTEGER,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        closed BOOLEAN DEFAULT FALSE
+      )
+    `);
+
     console.log('Database tables checked/created successfully.');
   } catch (err) {
     console.error('Error initializing database:', err);

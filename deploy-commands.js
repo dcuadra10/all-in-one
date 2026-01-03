@@ -97,6 +97,67 @@ const commands = [
 
 ].map(command => command.toJSON());
 
+const ticketCommands = [
+  new SlashCommandBuilder()
+    .setName('ticket-setup')
+    .setDescription('Admin: Setup the ticket panel in a channel')
+    .addChannelOption(option =>
+      option.setName('channel')
+        .setDescription('The channel where the ticket panel will be sent')
+        .setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName('ticket-category')
+    .setDescription('Admin: Manage ticket categories')
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('add')
+        .setDescription('Add a new ticket category')
+        .addStringOption(option =>
+          option.setName('name')
+            .setDescription('Name of the category')
+            .setRequired(true))
+        .addRoleOption(option =>
+          option.setName('role')
+            .setDescription('Staff role to be pinged/added for this category')
+            .setRequired(true))
+        .addStringOption(option =>
+          option.setName('emoji')
+            .setDescription('Emoji for the dropdown option (optional)')
+            .setRequired(false)))
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('remove')
+        .setDescription('Remove a ticket category')
+        .addStringOption(option =>
+          option.setName('name')
+            .setDescription('Name of the category to remove')
+            .setRequired(true)
+            .setAutocomplete(true))),
+
+  new SlashCommandBuilder()
+    .setName('close')
+    .setDescription('Close the current ticket'),
+
+  new SlashCommandBuilder()
+    .setName('add-user')
+    .setDescription('Add a user to the current ticket')
+    .addUserOption(option =>
+      option.setName('user')
+        .setDescription('User to add')
+        .setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName('remove-user')
+    .setDescription('Remove a user from the current ticket')
+    .addUserOption(option =>
+      option.setName('user')
+        .setDescription('User to remove')
+        .setRequired(true)),
+];
+
+commands.push(...ticketCommands.map(command => command.toJSON()));
+
 const rest = new REST({ version: '9' }).setToken(process.env.DISCORD_TOKEN);
 
 (async () => {
