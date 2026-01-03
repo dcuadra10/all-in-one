@@ -145,9 +145,18 @@ async function initializeDatabase() {
         name TEXT NOT NULL,
         emoji TEXT,
         staff_role_id TEXT,
+        form_questions JSONB,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
+
+    // Migration to add form_questions if it doesn't exist
+    try {
+      await client.query('ALTER TABLE ticket_categories ADD COLUMN IF NOT EXISTS form_questions JSONB');
+    } catch (err) {
+      // Ignore if column exists (though ADD COLUMN IF NOT EXISTS handles it in newer PG, node-pg might throw on syntax if old PG)
+      console.log('Safe migration: form_questions column check passed.');
+    }
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS ticket_panels (

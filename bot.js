@@ -910,6 +910,42 @@ client.on('interactionCreate', async interaction => {
           await interaction.reply({ content: `✅ Category **${name}** removed.`, ephemeral: true });
         }
 
+      } else if (commandName === 'ticket-wizard') {
+        const adminIds = (process.env.ADMIN_IDS || '').split(',');
+        if (!adminIds.includes(interaction.user.id)) {
+          return await interaction.reply({ content: '🚫 You do not have permission to use this command.', ephemeral: true });
+        }
+
+        await interaction.reply({ content: '🧙‍♂️ Starting Ticket Wizard...', ephemeral: true });
+
+        try {
+          // Create private thread
+          const thread = await interaction.channel.threads.create({
+            name: 'ticket-setup-wizard',
+            type: ChannelType.PrivateThread,
+            autoArchiveDuration: 60,
+            reason: 'Ticket Setup Wizard'
+          });
+          await thread.members.add(interaction.user.id);
+
+          const embed = new EmbedBuilder()
+            .setTitle('🧙‍♂️ Ticket Category Wizard')
+            .setDescription('Click the button below to create a new Ticket Category.\nThis will prompt you for the Name, Emoji, and Role ID.')
+            .setColor('Purple');
+
+          const btn = new ButtonBuilder()
+            .setCustomId('wizard_create_cat_btn')
+            .setLabel('Create Category')
+            .setStyle(ButtonStyle.Primary)
+            .setEmoji('✨');
+
+          await thread.send({ embeds: [embed], components: [new ActionRowBuilder().addComponents(btn)] });
+          await interaction.editReply({ content: `✅ Wizard started: <#${thread.id}>` });
+        } catch (err) {
+          console.error('Error starting wizard:', err);
+          await interaction.editReply({ content: '❌ Failed to create wizard thread. Check permissions.' });
+        }
+
       } else if (commandName === 'close') {
         // Check if channel is a ticket (which is now a thread)
         const { rows } = await db.query('SELECT * FROM tickets WHERE channel_id = $1 AND closed = FALSE', [interaction.channelId]);
@@ -1109,7 +1145,99 @@ client.on('interactionCreate', async interaction => {
         await interaction.showModal(modal);
       }
     } else if (interaction.isModalSubmit()) { // Handle Modal Submissions
-      if (interaction.customId.startsWith('buy_modal_')) {
+      if (interaction.customId === 'modal_wizard_cat') {
+        const name = interaction.fields.getTextInputValue('cat_name');
+        const emoji = interaction.fields.getTextInputValue('cat_emoji');
+        const roleId = interaction.fields.getTextInputValue('cat_role_id');
+
+        try {
+          const { rows } = await db.query(
+            'INSERT INTO ticket_categories (guild_id, name, emoji, staff_role_id) VALUES ($1, $2, $3, $4) RETURNING id',
+            [interaction.guildId, name, emoji, roleId]
+          );
+          const newCatId = rows[0].id;
+
+          const embed = new EmbedBuilder()
+            .setTitle('✅ Category Created')
+            .setDescription(`**Name:** ${name}\n**Emoji:** ${emoji}\n**Role:** <@&${roleId}>\n\nDo you want to add questions for this ticket category?`)
+            .setColor('Green');
+
+          const row = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId(`wizard_add_questions_${newCatId}`).setLabel('Add Entry Questions').setStyle(ButtonStyle.Primary),
+            new ButtonBuilder().setCustomId(`wizard_finish_${newCatId}`).setLabel('Finish').setStyle(ButtonStyle.Secondary)
+          );
+
+          await interaction.reply({ embeds: [embed], components: [row] });
+        } catch (err) {
+          console.error(err);
+          await interaction.reply({ content: '❌ Error creating category. Check role ID.', ephemeral: true });
+        }
+      } else if (interaction.customId.startsWith('modal_wizard_questions_')) {
+        const catId = interaction.customId.split('_')[3];
+        const q1 = interaction.fields.getTextInputValue('q1');
+        const q2 = interaction.fields.getTextInputValue('q2');
+        const q3 = interaction.fields.getTextInputValue('q3');
+        const q4 = interaction.fields.getTextInputValue('q4');
+        const q5 = interaction.fields.getTextInputValue('q5');
+
+        const questions = [q1, q2, q3, q4, q5].filter(q => q && q.trim().length > 0);
+
+        await db.query('UPDATE ticket_categories SET form_questions = $1 WHERE id = $2', [JSON.stringify(questions), catId]);
+        await interaction.reply({ content: `✅ Added ${questions.length} questions to category.`, ephemeral: true });
+
+      } else if (interaction.customId.startsWith('modal_ticket_create_')) {
+        const catId = interaction.customId.split('_')[3];
+
+        // Fetch category to get question texts corresponding to answers
+        const { rows } = await db.query('SELECT * FROM ticket_categories WHERE id = $1', [catId]);
+        if (rows.length === 0) return interaction.reply({ content: 'Category not found.', ephemeral: true });
+        const category = rows[0];
+        const formQuestions = category.form_questions || [];
+
+        const answers = [];
+        formQuestions.slice(0, 5).forEach((q, index) => {
+          const answer = interaction.fields.getTextInputValue(`q_${index}`);
+          answers.push({ question: q, answer: answer });
+        });
+
+        // NOW create the thread with answers
+        const guild = interaction.guild;
+        const channelName = `ticket-${interaction.user.username}-${category.name}`;
+
+        try {
+          const ticketThread = await interaction.channel.threads.create({
+            name: channelName,
+            type: ChannelType.PrivateThread,
+            reason: `Ticket created by ${interaction.user.tag}`,
+            autoArchiveDuration: 1440,
+          });
+          await ticketThread.members.add(interaction.user.id);
+
+          await db.query(
+            'INSERT INTO tickets (channel_id, guild_id, user_id, category_id) VALUES ($1, $2, $3, $4)',
+            [ticketThread.id, guild.id, interaction.user.id, category.id]
+          );
+
+          const answerFields = answers.map(a => `**${a.question}**\n${a.answer}`).join('\n\n');
+
+          const welcomeEmbed = new EmbedBuilder()
+            .setTitle(`${category.emoji} ${category.name} Ticket`)
+            .setDescription(`Welcome <@${interaction.user.id}>!\n\n${answerFields}\n\n<@&${category.staff_role_id}> will be with you shortly.`)
+            .setColor('Green');
+
+          const closeButton = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId('close_ticket_btn').setLabel('Close Ticket').setStyle(ButtonStyle.Danger).setEmoji('🔒')
+          );
+
+          await ticketThread.send({ embeds: [welcomeEmbed], components: [closeButton] });
+          await interaction.reply({ content: `✅ Ticket created: <#${ticketThread.id}>`, ephemeral: true });
+
+        } catch (err) {
+          console.error(err);
+          await interaction.reply({ content: '❌ Failed to create ticket.', ephemeral: true });
+        }
+
+      } else if (interaction.customId.startsWith('buy_modal_')) {
         const resource = interaction.customId.split('_')[2];
         const quantityString = interaction.fields.getTextInputValue('hp_quantity_input');
         const cost = parseShorthand(quantityString);
@@ -1248,16 +1376,33 @@ client.on('interactionCreate', async interaction => {
       }
     } else if (interaction.isStringSelectMenu()) {
       if (interaction.customId === 'ticket_select') {
-        await interaction.deferReply({ ephemeral: true });
-
         const categoryId = interaction.values[0];
 
         // Fetch category details
         const { rows: cats } = await db.query('SELECT * FROM ticket_categories WHERE id = $1', [categoryId]);
         if (cats.length === 0) {
-          return await interaction.editReply({ content: '❌ Category not found.' });
+          return await interaction.reply({ content: '❌ Category not found.', ephemeral: true });
         }
         const category = cats[0];
+
+        // Check if category has form questions
+        if (category.form_questions && category.form_questions.length > 0) {
+          const modal = new ModalBuilder()
+            .setCustomId(`modal_ticket_create_${category.id}`)
+            .setTitle(`${category.name} - Info`);
+
+          category.form_questions.slice(0, 5).forEach((q, index) => {
+            modal.addComponents(new ActionRowBuilder().addComponents(
+              new TextInputBuilder().setCustomId(`q_${index}`).setLabel(q.substring(0, 45)).setStyle(TextInputStyle.Paragraph).setRequired(true)
+            ));
+          });
+
+          await interaction.showModal(modal);
+          return;
+        }
+
+        // If no questions, proceed with standard ticket creation
+        await interaction.deferReply({ ephemeral: true });
 
         const guild = interaction.guild;
         const channelName = `ticket-${interaction.user.username}-${category.name}`;
@@ -1304,6 +1449,31 @@ client.on('interactionCreate', async interaction => {
         }
       }
     } else if (interaction.isButton()) { // Handle Button Clicks
+      if (interaction.customId === 'wizard_create_cat_btn') {
+        const modal = new ModalBuilder().setCustomId('modal_wizard_cat').setTitle('Create Ticket Category');
+        modal.addComponents(
+          new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('cat_name').setLabel('Category Name').setStyle(TextInputStyle.Short).setRequired(true)),
+          new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('cat_emoji').setLabel('Emoji').setStyle(TextInputStyle.Short).setPlaceholder('🎫').setRequired(true)),
+          new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('cat_role_id').setLabel('Staff Role ID').setStyle(TextInputStyle.Short).setPlaceholder('1234567890').setRequired(true))
+        );
+        await interaction.showModal(modal);
+        return;
+      } else if (interaction.customId.startsWith('wizard_add_questions_')) {
+        const catId = interaction.customId.split('_')[3];
+        const modal = new ModalBuilder().setCustomId(`modal_wizard_questions_${catId}`).setTitle('Add Entry Questions');
+        // Add 5 optional inputs
+        for (let i = 1; i <= 5; i++) {
+          modal.addComponents(new ActionRowBuilder().addComponents(
+            new TextInputBuilder().setCustomId(`q${i}`).setLabel(`Question ${i}`).setStyle(TextInputStyle.Short).setRequired(false)
+          ));
+        }
+        await interaction.showModal(modal);
+        return;
+      } else if (interaction.customId.startsWith('wizard_finish_')) {
+        await interaction.reply({ content: '✅ Setup finished. Don\'t forget to use /ticket-setup to refresh the panel!', ephemeral: true });
+        return;
+      }
+
       if (interaction.customId === 'close_ticket_btn') {
         await interaction.reply({ content: '🔒 Closing ticket...' });
 

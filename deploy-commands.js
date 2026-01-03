@@ -136,6 +136,10 @@ const ticketCommands = [
             .setAutocomplete(true))),
 
   new SlashCommandBuilder()
+    .setName('ticket-wizard')
+    .setDescription('Admin: Interactive setup for ticket categories (creates a config thread)'),
+
+  new SlashCommandBuilder()
     .setName('close')
     .setDescription('Close the current ticket'),
 
