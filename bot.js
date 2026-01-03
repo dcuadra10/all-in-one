@@ -1423,7 +1423,8 @@ client.on('interactionCreate', async interaction => {
         }
       }
     }
-  });
+  }
+});
 
 // Web server to keep the bot alive on hosting platforms like Koyeb/Railway
 const app = express();
