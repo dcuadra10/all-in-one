@@ -302,15 +302,17 @@ client.on('guildMemberAdd', async member => {
 
         const welcomeVideoUrl = process.env.WELCOME_VIDEO_URL; // Define welcomeVideoUrl here
 
-        const welcomeContent =
-          `# ✨ Welcome To The Sovereign Empire ✨
->>> <@${member.id}> has entered the Project!!!
+        const welcomeEmbed = new EmbedBuilder()
+          .setTitle('✨ Welcome To The Sovereign Empire ✨')
+          .setDescription(`<@${member.id}> has entered the Project!!!⠀⠀\n\n📜 Check out <#${informationChannelId}> or <#${usefulLinksChannelId}> to get to know the project more.\n\n🔐 Head to <#${verificationChannelId}> to unlock the server.\n\n💬 Need help or have questions? Reach out to the staff in <#${ticketerChannelId}> -Remember to create your ticket with the staff.`)
+          .setColor('Gold')
+          .setTimestamp()
+          .setThumbnail(member.user.displayAvatarURL({ dynamic: true }));
 
-📜 Check out <#${informationChannelId}> or <#${usefulLinksChannelId}> to get to know the project more.
-
-🔐 Head to <#${verificationChannelId}> to unlock the server.
-
-💬 Need help or have questions? Reach out to the staff in <#${ticketerChannelId}> -Remember to create your ticket with the staff.${welcomeVideoUrl ? `\n\n${welcomeVideoUrl}` : ''}`;
+        // Add welcome video from URL if configured
+        if (welcomeVideoUrl) {
+          welcomeEmbed.setImage(welcomeVideoUrl);
+        }
 
         const welcomeRow = new ActionRowBuilder()
           .addComponents(
@@ -332,7 +334,7 @@ client.on('guildMemberAdd', async member => {
               .setURL(`https://discord.com/channels/${guild.id}/${ticketerChannelId}`)
           );
 
-        await welcomeChannel.send({ content: welcomeContent, components: [welcomeRow] });
+        await welcomeChannel.send({ embeds: [welcomeEmbed], components: [welcomeRow] });
       }
     }
   } catch (error) {
@@ -529,17 +531,18 @@ client.on('interactionCreate', async interaction => {
       await interaction.deferReply();
       const { rows } = await db.query('SELECT * FROM users WHERE id = $1', [interaction.user.id]);
       const row = rows[0];
-      const balanceContent =
-        `# 📊 Balance of ${interaction.user.username}
->>> 💰 **Sovereign Pounds**: ${(row?.balance || 0).toLocaleString('en-US')}
-🪙 **Gold**: ${(row?.gold || 0).toLocaleString('en-US')}
-🪵 **Wood**: ${(row?.wood || 0).toLocaleString('en-US')}
-🌽 **Food**: ${(row?.food || 0).toLocaleString('en-US')}
-🪨 **Stone**: ${(row?.stone || 0).toLocaleString('en-US')}
+      const embed = new EmbedBuilder()
+        .setTitle(`📊 Balance of ${interaction.user.username}`)
+        .addFields(
+          { name: '💰 Sovereign Pounds', value: `**${(row?.balance || 0).toLocaleString('en-US')}**`, inline: true },
+          { name: '🪙 Gold', value: `${(row?.gold || 0).toLocaleString('en-US')}`, inline: true },
+          { name: '🪵 Wood', value: `${(row?.wood || 0).toLocaleString('en-US')}`, inline: true },
+          { name: '🌽 Food', value: `${(row?.food || 0).toLocaleString('en-US')}`, inline: true },
+          { name: '🪨 Stone', value: `${(row?.stone || 0).toLocaleString('en-US')}`, inline: true }
+        )
+        .setFooter({ text: 'Note: Resources (RSS) will be granted when the temple is conquered. If the project is canceled, all resources and currency will be lost.' });
 
-_Note: Resources (RSS) will be granted when the temple is conquered. If the project is canceled, all resources and currency will be lost._`;
-
-      await interaction.editReply({ content: balanceContent });
+      await interaction.editReply({ embeds: [embed] });
     } else if (commandName === 'shop') {
       try {
         const embed = new EmbedBuilder()
@@ -581,35 +584,42 @@ _Note: Resources (RSS) will be granted when the temple is conquered. If the proj
 
     } else if (commandName === 'help') {
       await interaction.deferReply();
-      const helpContent =
-        `# ❓ Sovereign Pounds Help
->>> **💸 How to Earn Sovereign Pounds**
-- **Invites**: Earn **20** 💰 for each person you invite.
-- **Messages**: Earn **5** 💰 for every 100 messages you send.
-- **Voice Chat**: Earn **5** 💰 for every hour you spend in a voice channel.
-- **Server Boosts**: Earn **500** 💰 for each time you boost the server.
-
-**🤖 User Commands**
-\` /balance \`: Check your balance and resource inventory.
-\` /shop \`: View and purchase resources from the shop.
-\` /daily \`: Claim your daily reward with a streak bonus.
-\` /stats [user] \`: Check your contribution stats.
-\` /leaderboard \`: See the top 10 richest users and your rank.
-\` /help \`: Shows this help message.
-
-**⚙️ Admin Commands**
-\` /pool \`: Check the server pool balance.
-\` /give <user> <amount> \`: Give currency to a user from the pool.
-\` /take <user> <amount> \`: Take currency from a user.
-\` /giveaway <duration> <total_prize> [winners] [entry_cost] [ping_role] \`: Create a giveaway with flexible prize and entry cost.
-
-**🎁 Giveaways**
-Giveaways allow users to pay Sovereign Pounds to participate and win prizes!
-- Entry costs are paid from your balance and added to the server pool
-- Winners receive the prize amount from the server pool
-- Only admins can create giveaways`;
-
-      await interaction.editReply({ content: helpContent });
+      const helpEmbed = new EmbedBuilder()
+        .setTitle('❓ Sovereign Pounds Help')
+        .setColor('Green')
+        .addFields(
+          {
+            name: '💸 How to Earn Sovereign Pounds',
+            value: '- **Invites**: Earn **20** 💰 for each person you invite.\n' +
+              '- **Messages**: Earn **5** 💰 for every 100 messages you send.\n' +
+              '- **Voice Chat**: Earn **5** 💰 for every hour you spend in a voice channel.\n' +
+              '- **Server Boosts**: Earn **500** 💰 for each time you boost the server.'
+          },
+          {
+            name: '🤖 User Commands',
+            value: '`/balance`: Check your balance and resource inventory.\n' +
+              '`/shop`: View and purchase resources from the shop.\n' +
+              '`/daily`: Claim your daily reward with a streak bonus.\n' +
+              '`/stats [user]`: Check your contribution stats.\n' +
+              '`/leaderboard`: See the top 10 richest users and your rank.\n' +
+              '`/help`: Shows this help message.'
+          },
+          {
+            name: '⚙️ Admin Commands',
+            value: '`/pool`: Check the server pool balance.\n' +
+              '`/give <user> <amount>`: Give currency to a user from the pool.\n' +
+              '`/take <user> <amount>`: Take currency from a user.\n' +
+              '`/giveaway <duration> <total_prize> [winners] [entry_cost] [ping_role]`: Create a giveaway with flexible prize and entry cost.'
+          },
+          {
+            name: '🎁 Giveaways',
+            value: 'Giveaways allow users to pay Sovereign Pounds to participate and win prizes!\n' +
+              '- Entry costs are paid from your balance and added to the server pool\n' +
+              '- Winners receive the prize amount from the server pool\n' +
+              '- Only admins can create giveaways'
+          },
+        );
+      await interaction.editReply({ embeds: [helpEmbed] });
     } else if (commandName === 'daily') {
       await interaction.deferReply();
       const userId = interaction.user.id;
@@ -649,13 +659,11 @@ Giveaways allow users to pay Sovereign Pounds to participate and win prizes!
 
         await db.query('UPDATE users SET balance = balance + $1, last_daily = $2, daily_streak = $3 WHERE id = $4', [reward, todayStr, streak, userId]);
 
-        const dailyContent =
-          `# 🎉 Daily Reward Claimed! 🎉
->>> You have received **${reward}** 💰!
-Your current streak is **${streak}** day(s).
-${streak >= 15 ? '\n🏆 **Maximum streak reached!** You are earning the maximum daily reward!' : ' Come back tomorrow to increase it!'}`;
-
-        await interaction.editReply({ content: dailyContent });
+        const replyEmbed = new EmbedBuilder()
+          .setTitle('🎉 Daily Reward Claimed! 🎉')
+          .setDescription(`You have received **${reward}** 💰!\nYour current streak is **${streak}** day(s).${streak >= 15 ? '\n\n🏆 **Maximum streak reached!** You are earning the maximum daily reward!' : ' Come back tomorrow to increase it!'}`)
+          .setColor('Gold');
+        await interaction.editReply({ embeds: [replyEmbed] });
         logActivity('🎁 Daily Reward', `<@${userId}> claimed their daily reward of **${reward}** 💰 (Streak: ${streak}).`, 'Aqua');
       } catch (err) {
         console.error(err);
@@ -853,12 +861,12 @@ ${streak >= 15 ? '\n🏆 **Maximum streak reached!** You are earning the maximum
 
         const row = new ActionRowBuilder().addComponents(selectMenu);
 
-        const panelContent =
-          `# 🎫 Support Tickets
->>> Please select a category below to open a ticket.
-Our staff team will assist you as soon as possible.`;
+        const panelEmbed = new EmbedBuilder()
+          .setTitle('🎫 Support Tickets')
+          .setDescription('Please select a category below to open a ticket.\nOur staff team will assist you as soon as possible.')
+          .setColor('Blue');
 
-        const sentMessage = await channel.send({ content: panelContent, components: [row] });
+        const sentMessage = await channel.send({ embeds: [panelEmbed], components: [row] });
 
         // Save panel info to update it later
         await db.query(`
@@ -1267,10 +1275,10 @@ Our staff team will assist you as soon as possible.`;
             [ticketThread.id, guild.id, interaction.user.id, category.id]
           );
 
-          const welcomeContent =
-            `# ${category.emoji} ${category.name} Ticket
->>> Welcome <@${interaction.user.id}>!
-Please describe your issue here. <@&${category.staff_role_id}> will be with you shortly.`;
+          const welcomeEmbed = new EmbedBuilder()
+            .setTitle(`${category.emoji} ${category.name} Ticket`)
+            .setDescription(`Welcome <@${interaction.user.id}>!\nPlease describe your issue here. <@&${category.staff_role_id}> will be with you shortly.`)
+            .setColor('Green');
 
           const closeButton = new ActionRowBuilder()
             .addComponents(
@@ -1281,7 +1289,7 @@ Please describe your issue here. <@&${category.staff_role_id}> will be with you 
                 .setEmoji('🔒')
             );
 
-          await ticketThread.send({ content: welcomeContent, components: [closeButton] });
+          await ticketThread.send({ embeds: [welcomeEmbed], components: [closeButton] });
 
           await interaction.editReply({ content: `✅ Ticket created: <#${ticketThread.id}>` });
 
