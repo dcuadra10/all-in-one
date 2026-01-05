@@ -155,6 +155,27 @@ const commands = [
         .setRequired(false)),
 
   new SlashCommandBuilder()
+    .setName('qotd-setup')
+    .setDescription('Admin: Configure Question of the Day')
+    .addChannelOption(option => option.setName('channel').setDescription('Channel to post QOTD').setRequired(true))
+    .addRoleOption(option => option.setName('role').setDescription('Role to ping').setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName('qotd-add')
+    .setDescription('Admin: Schedule a Question of the Day')
+    .addStringOption(option => option.setName('date').setDescription('YYYY-MM-DD').setRequired(true))
+    .addStringOption(option => option.setName('question').setDescription('The question to ask').setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName('qotd-list')
+    .setDescription('Admin: List scheduled questions'),
+
+  new SlashCommandBuilder()
+    .setName('qotd-remove')
+    .setDescription('Admin: Remove a scheduled question')
+    .addIntegerOption(option => option.setName('id').setDescription('ID of the question').setRequired(true)),
+
+  new SlashCommandBuilder()
     .setName('reset-all')
     .setDescription('Admin: Reset all user balances, stats, and resources (IRREVERSIBLE)'),
 

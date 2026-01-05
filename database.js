@@ -203,6 +203,25 @@ async function initializeDatabase() {
       )
     `);
 
+    // QOTD Settings
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS qotd_settings (
+        guild_id TEXT PRIMARY KEY,
+        channel_id TEXT,
+        role_id TEXT
+      )
+    `);
+
+    // QOTD Questions
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS qotd_questions (
+        id INTEGER PRIMARY KEY, 
+        date TEXT,
+        question TEXT,
+        posted INTEGER DEFAULT 0
+      )
+    `);
+
     // Server-wide stats
     await client.query(`
       CREATE TABLE IF NOT EXISTS server_stats (

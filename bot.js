@@ -395,7 +395,56 @@ client.once(Events.ClientReady, async () => {
   // Seed the shop if empty
   await seedShop();
 
-  // Reset daily counts if needed, but for simplicity, not implemented
+  // QOTD Scheduler
+  setInterval(async () => {
+    const now = new Date();
+    // Check if it's 00:00 UTC
+    if (now.getUTCHours() === 0 && now.getUTCMinutes() === 0) {
+      const dateStr = now.toISOString().split('T')[0];
+
+      try {
+        // Check for question
+        const { rows } = await db.query('SELECT * FROM qotd_questions WHERE date = $1 AND posted = 0', [dateStr]);
+        if (rows.length > 0) {
+          const qotd = rows[0];
+
+          // Fetch settings
+          const { rows: settingsRows } = await db.query('SELECT * FROM qotd_settings');
+
+          for (const settings of settingsRows) {
+            const guild = client.guilds.cache.get(settings.guild_id);
+            if (!guild) continue;
+
+            const channel = guild.channels.cache.get(settings.channel_id);
+            if (channel && channel.isTextBased()) {
+              const rolePing = settings.role_id ? `<@&${settings.role_id}>` : '';
+
+              const embed = new EmbedBuilder()
+                .setTitle('❓ Question of the Day')
+                .setDescription(qotd.question)
+                .setColor('Gold')
+                .setFooter({ text: `Date: ${dateStr}` });
+
+              const msg = await channel.send({ content: rolePing, embeds: [embed] });
+
+              // Create Thread
+              await msg.startThread({
+                name: `QOTD: ${dateStr}`,
+                autoArchiveDuration: 1440
+              });
+
+              console.log(`✅ QOTD posted for ${dateStr} in ${guild.name}`);
+            }
+          }
+
+          // Mark as posted
+          await db.query('UPDATE qotd_questions SET posted = 1 WHERE id = $1', [qotd.id]);
+        }
+      } catch (err) {
+        console.error('Error in QOTD scheduler:', err);
+      }
+    }
+  }, 60000); // Check every minute
 });
 
 client.on('guildMemberAdd', async member => {
@@ -1061,6 +1110,56 @@ client.on('interactionCreate', async interaction => {
         console.error(e);
         interaction.reply({ content: '❌ Error updating stock.', ephemeral: true });
       }
+
+    } else if (commandName === 'qotd-setup') {
+      const adminIds = (process.env.ADMIN_IDS || '').split(',');
+      if (!adminIds.includes(interaction.user.id)) return interaction.reply({ content: '🚫 Admin only.', ephemeral: true });
+
+      const channel = interaction.options.getChannel('channel');
+      const role = interaction.options.getRole('role');
+
+      await safeQuery(`
+            INSERT INTO qotd_settings (guild_id, channel_id, role_id)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (guild_id) DO UPDATE SET channel_id = $2, role_id = $3
+        `, [interaction.guildId, channel.id, role.id]);
+
+      await interaction.reply({ content: `✅ QOTD configured: Channel ${channel}, Role ${role}.`, ephemeral: true });
+
+    } else if (commandName === 'qotd-add') {
+      const adminIds = (process.env.ADMIN_IDS || '').split(',');
+      if (!adminIds.includes(interaction.user.id)) return interaction.reply({ content: '🚫 Admin only.', ephemeral: true });
+
+      const dateStr = interaction.options.getString('date');
+      const question = interaction.options.getString('question');
+
+      // Validate date
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+        return interaction.reply({ content: '❌ Invalid date format. Use YYYY-MM-DD.', ephemeral: true });
+      }
+
+      await safeQuery('INSERT INTO qotd_questions (date, question) VALUES ($1, $2)', [dateStr, question]);
+      await interaction.reply({ content: `✅ Scheduled QOTD for **${dateStr}**: "${question}"`, ephemeral: true });
+
+    } else if (commandName === 'qotd-list') {
+      const adminIds = (process.env.ADMIN_IDS || '').split(',');
+      if (!adminIds.includes(interaction.user.id)) return interaction.reply({ content: '🚫 Admin only.', ephemeral: true });
+
+      const { rows } = await safeQuery('SELECT * FROM qotd_questions WHERE posted = 0 ORDER BY date ASC LIMIT 20');
+
+      if (rows.length === 0) return interaction.reply({ content: 'No pending questions.', ephemeral: true });
+
+      const description = rows.map(q => `**ID ${q.id}** (${q.date}): ${q.question.substring(0, 50)}...`).join('\n');
+      const embed = new EmbedBuilder().setTitle('📅 Scheduled QOTD').setDescription(description).setColor('Gold');
+      await interaction.reply({ embeds: [embed], ephemeral: true });
+
+    } else if (commandName === 'qotd-remove') {
+      const adminIds = (process.env.ADMIN_IDS || '').split(',');
+      if (!adminIds.includes(interaction.user.id)) return interaction.reply({ content: '🚫 Admin only.', ephemeral: true });
+
+      const id = interaction.options.getInteger('id');
+      await safeQuery('DELETE FROM qotd_questions WHERE id = $1', [id]);
+      await interaction.reply({ content: `✅ Removed question ID **${id}**.`, ephemeral: true });
 
     } else if (commandName === 'ticket-setup') {
       await interaction.deferReply({ ephemeral: true });
