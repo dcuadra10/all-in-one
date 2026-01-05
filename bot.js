@@ -1736,40 +1736,38 @@ client.on('interactionCreate', async interaction => {
       console.error(err);
       interaction.reply({ content: `❌ Transaction failed.`, ephemeral: true });
     }
-    interaction.reply({ content: `❌ Transaction failed.`, ephemeral: true });
-  }
-}
-} else if (interaction.customId === 'ticket_select') {
-  const catId = interaction.values[0];
-  try {
-    const { rows } = await safeQuery('SELECT * FROM ticket_categories WHERE id = $1', [catId]);
-    if (rows.length === 0) return interaction.reply({ content: 'Category not found.', ephemeral: true });
+  } else if (interaction.customId === 'ticket_select') {
+    const catId = interaction.values[0];
+    try {
+      const { rows } = await safeQuery('SELECT * FROM ticket_categories WHERE id = $1', [catId]);
+      if (rows.length === 0) return interaction.reply({ content: 'Category not found.', ephemeral: true });
 
-    const category = rows[0];
-    let parsedQs = category.form_questions;
-    if (typeof parsedQs === 'string') try { parsedQs = JSON.parse(parsedQs); } catch (e) { }
-    if (!Array.isArray(parsedQs)) parsedQs = [];
+      const category = rows[0];
+      let parsedQs = category.form_questions;
+      if (typeof parsedQs === 'string') try { parsedQs = JSON.parse(parsedQs); } catch (e) { }
+      if (!Array.isArray(parsedQs)) parsedQs = [];
 
-    if (parsedQs.length === 0) parsedQs = ['Please describe your request:'];
+      if (parsedQs.length === 0) parsedQs = ['Please describe your request:'];
 
-    const modal = new ModalBuilder()
-      .setCustomId(`modal_ticket_create_${catId}`)
-      .setTitle(`Open Ticket: ${category.name}`);
+      const modal = new ModalBuilder()
+        .setCustomId(`modal_ticket_create_${catId}`)
+        .setTitle(`Open Ticket: ${category.name}`);
 
-    parsedQs.slice(0, 5).forEach((q, i) => {
-      modal.addComponents(new ActionRowBuilder().addComponents(
-        new TextInputBuilder()
-          .setCustomId(`q_${i}`)
-          .setLabel(q.substring(0, 45))
-          .setStyle(TextInputStyle.Paragraph)
-          .setRequired(true)
-      ));
-    });
+      parsedQs.slice(0, 5).forEach((q, i) => {
+        modal.addComponents(new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId(`q_${i}`)
+            .setLabel(q.substring(0, 45))
+            .setStyle(TextInputStyle.Paragraph)
+            .setRequired(true)
+        ));
+      });
 
-    await interaction.showModal(modal);
-  } catch (err) {
-    console.error(err);
-    interaction.reply({ content: 'Error opening form.', ephemeral: true });
+      await interaction.showModal(modal);
+    } catch (err) {
+      console.error(err);
+      interaction.reply({ content: 'Error opening form.', ephemeral: true });
+    }
   }
 } else if (interaction.isModalSubmit()) { // Handle Modal Submissions
   if (interaction.customId === 'modal_wizard_cat') {
