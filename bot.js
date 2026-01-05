@@ -1022,10 +1022,19 @@ client.on('interactionCreate', async interaction => {
 
       const id = interaction.options.getInteger('id');
       const amountStr = interaction.options.getString('amount');
-      const amount = parseShorthand(amountStr);
 
-      if (isNaN(amount)) {
-        return interaction.reply({ content: '❌ Invalid amount format (use 1k, 1m, 100).', ephemeral: true });
+      let amount;
+      let setInfinite = false;
+
+      if (['inf', 'infinite', 'unlimited'].includes(amountStr.toLowerCase())) {
+        setInfinite = true;
+        amount = 0;
+      } else {
+        amount = parseShorthand(amountStr);
+      }
+
+      if (isNaN(amount) && !setInfinite) {
+        return interaction.reply({ content: '❌ Invalid amount format (use 1k, 1m, 100, or "inf").', ephemeral: true });
       }
 
       try {
@@ -1035,7 +1044,10 @@ client.on('interactionCreate', async interaction => {
         const current = rows[0].stock;
         let newStock;
 
-        if (current === -1) {
+        if (setInfinite) {
+          newStock = -1;
+        } else if (current === -1) {
+          // Switching from infinite to finite
           newStock = amount;
           if (newStock < 0) newStock = 0;
         } else {
@@ -1051,9 +1063,11 @@ client.on('interactionCreate', async interaction => {
       }
 
     } else if (commandName === 'ticket-setup') {
+      await interaction.deferReply({ ephemeral: true });
+
       const adminIds = (process.env.ADMIN_IDS || '').split(',');
       if (!adminIds.includes(interaction.user.id)) {
-        return await interaction.reply({ content: '🚫 You do not have permission to use this command.', ephemeral: true });
+        return await interaction.editReply({ content: '🚫 You do not have permission to use this command.' });
       }
 
       const channel = interaction.options.getChannel('channel');
@@ -1064,10 +1078,8 @@ client.on('interactionCreate', async interaction => {
       const validCategories = categories.filter(cat => cat.id != null).slice(0, 25);
 
       if (validCategories.length === 0) {
-        return await interaction.reply({ content: '❌ No valid ticket categories found. Please use `/ticket-category add` first.', ephemeral: true });
+        return await interaction.editReply({ content: '❌ No valid ticket categories found. Please use `/ticket-category add` first.' });
       }
-
-      await interaction.deferReply({ ephemeral: true });
 
       const selectMenu = new StringSelectMenuBuilder()
         .setCustomId('ticket_select')
