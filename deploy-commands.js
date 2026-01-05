@@ -121,9 +121,9 @@ const commands = [
       option.setName('id')
         .setDescription('ID of the shop item')
         .setRequired(true))
-    .addIntegerOption(option =>
+    .addStringOption(option =>
       option.setName('amount')
-        .setDescription('Amount of stock to add (use negative to remove)')
+        .setDescription('Amount of stock to add (e.g. 1k, 1m)')
         .setRequired(true)),
 
   new SlashCommandBuilder()

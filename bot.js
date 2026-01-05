@@ -661,13 +661,26 @@ client.on('interactionCreate', async interaction => {
         const { rows: userRows } = await safeQuery('SELECT balance FROM users WHERE id = $1', [interaction.user.id]);
         const balance = userRows[0]?.balance || 0;
 
+        let description = `Select an item below to purchase.\n\n💰 **Your Balance:** ${balance.toLocaleString('en-US')} 💰\n\n`;
+
+        if (items.length > 0) {
+          description += `**__Available Items__**\n`;
+          items.slice(0, 20).forEach(item => {
+            const stockDisplay = item.stock === -1 ? '♾️ Infinite' : item.stock;
+            const itemDesc = item.description ? `\n> *${item.description}*` : '';
+            description += `> ${item.emoji || '📦'} **${item.name}** — **${item.price.toLocaleString('en-US')}** 💰\n> 📦 Stock: ${stockDisplay}${itemDesc}\n\n`;
+          });
+          if (items.length > 20) description += `\n*(...and ${items.length - 20} more items in the menu)*`;
+        } else {
+          description += '\n🚫 The shop is currently empty.';
+        }
+
         const embed = new EmbedBuilder()
           .setColor('Blue')
           .setTitle(`💰 Sovereign Empire Shop`)
-          .setDescription(`Select an item below to purchase.\n\n💰 **Your Balance:** ${balance.toLocaleString('en-US')} 💰`);
+          .setDescription(description.substring(0, 4096));
 
         if (items.length === 0) {
-          embed.setDescription(embed.data.description + '\n\n🚫 The shop is currently empty.');
           return await interaction.reply({ embeds: [embed], ephemeral: true });
         }
 
@@ -1007,7 +1020,12 @@ client.on('interactionCreate', async interaction => {
       if (!adminIds.includes(interaction.user.id)) return interaction.reply({ content: '🚫 Admin only.', ephemeral: true });
 
       const id = interaction.options.getInteger('id');
-      const amount = interaction.options.getInteger('amount');
+      const amountStr = interaction.options.getString('amount');
+      const amount = parseShorthand(amountStr);
+
+      if (isNaN(amount)) {
+        return interaction.reply({ content: '❌ Invalid amount format (use 1k, 1m, 100).', ephemeral: true });
+      }
 
       try {
         const { rows } = await safeQuery('SELECT * FROM shop_items WHERE id = $1', [id]);
