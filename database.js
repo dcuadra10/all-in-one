@@ -152,6 +152,29 @@ async function initializeDatabase() {
       )
     `);
 
+    // Shop Items Table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS shop_items (
+        id INTEGER PRIMARY KEY, 
+        name TEXT NOT NULL,
+        price REAL NOT NULL,
+        emoji TEXT,
+        description TEXT,
+        role_id TEXT,
+        resource_type TEXT,
+        quantity INTEGER DEFAULT 1
+      )
+    `);
+
+    // Migration: Add quantity to shop_items
+    try {
+      await client.query('ALTER TABLE shop_items ADD COLUMN quantity INTEGER DEFAULT 1');
+    } catch (err) {
+      if (!err.message.includes('duplicate column') && !err.message.includes('already exists')) {
+        console.log('Migration note (shop_items quantity):', err.message);
+      }
+    }
+
     // Boosts
     await client.query(`
       CREATE TABLE IF NOT EXISTS boosts (

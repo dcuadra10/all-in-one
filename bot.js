@@ -583,47 +583,59 @@ client.on('interactionCreate', async interaction => {
       await interaction.editReply({ embeds: [embed] });
     } else if (commandName === 'shop') {
       try {
+        // Fetch shop items from database
+        const { rows: items } = await safeQuery('SELECT * FROM shop_items ORDER BY price ASC');
+
+        // Check balance
+        const { rows: userRows } = await safeQuery('SELECT balance FROM users WHERE id = $1', [interaction.user.id]);
+        const balance = userRows[0]?.balance || 0;
+
         const embed = new EmbedBuilder()
           .setColor('Blue')
-          .setDescription(`# ${EMOJIS.coin} Shop\nSelect a resource to purchase.\n\n> **Price:** 10 ${EMOJIS.coin} per package.`);
+          .setTitle(`${EMOJIS.coin} Sovereign Empire Shop`)
+          .setDescription(`Select an item below to purchase.\n\n${EMOJIS.coin} **Your Balance:** ${balance.toLocaleString('en-US')} ${EMOJIS.coin}`);
 
-        const goldButton = new ButtonBuilder()
-          .setCustomId('buy_gold')
-          .setLabel('🪙 Buy Gold')
-          .setStyle(ButtonStyle.Primary);
+        if (items.length === 0) {
+          embed.setDescription(embed.data.description + '\n\n🚫 The shop is currently empty.');
+          return await interaction.reply({ embeds: [embed], ephemeral: true });
+        }
 
-        const woodButton = new ButtonBuilder()
-          .setCustomId('buy_wood')
-          .setLabel('🪵 Buy Wood')
-          .setStyle(ButtonStyle.Primary);
+        const selectMenu = new StringSelectMenuBuilder()
+          .setCustomId('shop_buy_select')
+          .setPlaceholder('Browse the catalog...');
 
-        const foodButton = new ButtonBuilder()
-          .setCustomId('buy_food')
-          .setLabel('🌽 Buy Food')
-          .setStyle(ButtonStyle.Primary);
+        // Discord limits Select Menu to 25 items
+        items.slice(0, 25).forEach(item => {
+          // Parse emoji: If it's a custom ID string, use it. If unicode, use it.
+          // StringSelectMenuOptionBuilder setEmoji accepts ID or Unicode.
+          // My EMOJIS const has full string `<:name:id>`. extract ID.
+          let emojiIdOrChar = '📦';
+          if (item.emoji) {
+            const match = item.emoji.match(/:(\d+)>/);
+            emojiIdOrChar = match ? match[1] : item.emoji;
+          }
 
-        const stoneButton = new ButtonBuilder()
-          .setCustomId('buy_stone')
-          .setLabel('🪨 Buy Stone')
-          .setStyle(ButtonStyle.Primary);
+          selectMenu.addOptions(
+            new StringSelectMenuOptionBuilder()
+              .setLabel(`${item.name}`)
+              .setValue(item.id.toString())
+              .setDescription(`${item.price.toLocaleString('en-US')} ${EMOJIS.coin} - ${item.description || ''}`.substring(0, 100))
+              .setEmoji(emojiIdOrChar)
+          );
+        });
 
-        const row1 = new ActionRowBuilder().addComponents(goldButton, woodButton);
-        const row2 = new ActionRowBuilder().addComponents(foodButton, stoneButton);
+        const row = new ActionRowBuilder().addComponents(selectMenu);
+        await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
 
-        await interaction.reply({ embeds: [embed], components: [row1, row2] });
       } catch (error) {
         console.error('Error in shop command:', error);
-        try {
-          await interaction.reply({ content: '❌ An error occurred while opening the shop. Please try again.', ephemeral: true });
-        } catch (replyError) {
-          console.error('Error replying to shop command:', replyError);
-        }
+        await interaction.reply({ content: `${EMOJIS.cross} An error occurred while opening the shop.`, ephemeral: true });
       }
 
     } else if (commandName === 'help') {
-      await interaction.deferReply();
-      const helpEmbed = new EmbedBuilder()
-        .setColor('2B2D31')
+      const embed = new EmbedBuilder()
+        .setColor('Blue')
+        .setTitle(`${EMOJIS.coin} Sovereign Empire Bot Help`)
         .setDescription(`# Command List
         
 **Earn Currency**
@@ -638,9 +650,12 @@ client.on('interactionCreate', async interaction => {
 
 **Admin Commands**
 \`/pool\` \`/give\` \`/take\`
-\`/giveaway\``);
+\`/shop-add\` \`/shop-remove\`
+\`/giveaway\` \`/add-emoji\`
+\`/ticket-setup\` \`/reset-all\``)
+        .setFooter({ text: 'Sovereign Empire Economy', iconURL: interaction.guild.iconURL() });
 
-      await interaction.editReply({ embeds: [helpEmbed] });
+      await interaction.reply({ embeds: [embed] });
     } else if (commandName === 'daily') {
       await interaction.deferReply();
       const userId = interaction.user.id;
@@ -873,6 +888,46 @@ client.on('interactionCreate', async interaction => {
       } catch (error) {
         console.error('Error taking currency:', error);
         await interaction.editReply({ content: `${EMOJIS.cross} An error occurred while taking currency.` });
+      }
+
+    } else if (commandName === 'shop-add') {
+      const adminIds = (process.env.ADMIN_IDS || '').split(',');
+      if (!adminIds.includes(interaction.user.id)) {
+        return interaction.reply({ content: '🚫 You do not have permission to use this command.', ephemeral: true });
+      }
+
+      const name = interaction.options.getString('name');
+      const price = interaction.options.getNumber('price');
+      const emoji = interaction.options.getString('emoji') || '📦';
+      const description = interaction.options.getString('description');
+      const role = interaction.options.getRole('role');
+      const resource = interaction.options.getString('resource');
+      const quantity = interaction.options.getInteger('quantity') || 1;
+
+      try {
+        await safeQuery(
+          'INSERT INTO shop_items (name, price, emoji, description, role_id, resource_type, quantity) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+          [name, price, emoji, description, role?.id, resource, quantity]
+        );
+        await interaction.reply({ content: `${EMOJIS.check} Added item **${name}** (x${quantity}) to the shop for **${price}** ${EMOJIS.coin}.`, ephemeral: true });
+      } catch (error) {
+        console.error('Error adding shop item:', error);
+        await interaction.reply({ content: `${EMOJIS.cross} Failed to add item.`, ephemeral: true });
+      }
+
+    } else if (commandName === 'shop-remove') {
+      const adminIds = (process.env.ADMIN_IDS || '').split(',');
+      if (!adminIds.includes(interaction.user.id)) {
+        return interaction.reply({ content: '🚫 You do not have permission to use this command.', ephemeral: true });
+      }
+
+      const id = interaction.options.getInteger('id');
+      try {
+        await safeQuery('DELETE FROM shop_items WHERE id = $1', [id]);
+        await interaction.reply({ content: `${EMOJIS.check} Removed shop item ID **${id}**.`, ephemeral: true });
+      } catch (error) {
+        console.error('Error removing shop item:', error);
+        await interaction.reply({ content: `${EMOJIS.cross} Failed to remove item.`, ephemeral: true });
       }
 
     } else if (commandName === 'ticket-setup') {
@@ -1222,6 +1277,82 @@ client.on('interactionCreate', async interaction => {
       );
 
       await interaction.showModal(modal);
+    }
+  } else if (interaction.isStringSelectMenu()) {
+    if (interaction.customId === 'shop_buy_select') {
+      const itemId = interaction.values[0];
+      try {
+        const { rows } = await safeQuery('SELECT * FROM shop_items WHERE id = $1', [itemId]);
+        if (rows.length === 0) return interaction.reply({ content: `${EMOJIS.cross} Item no longer exists.`, ephemeral: true });
+        const item = rows[0];
+
+        const { rows: userRows } = await safeQuery('SELECT balance FROM users WHERE id = $1', [interaction.user.id]);
+        const balance = userRows[0]?.balance || 0;
+
+        if (balance < item.price) {
+          return interaction.reply({ content: `${EMOJIS.cross} Insufficient funds. You need **${item.price.toLocaleString('en-US')}** ${EMOJIS.coin} to buy **${item.name}**.`, ephemeral: true });
+        }
+
+        await safeQuery('UPDATE users SET balance = balance - $1 WHERE id = $2', [item.price, interaction.user.id]);
+
+        let rewardMsg = '';
+        if (item.resource_type) {
+          const colName = item.resource_type.toLowerCase();
+          if (['gold', 'wood', 'food', 'stone'].includes(colName)) {
+            const qty = item.quantity || 1;
+            await safeQuery(`UPDATE users SET ${colName} = ${colName} + $1 WHERE id = $2`, [qty, interaction.user.id]);
+            rewardMsg = `Received **${qty.toLocaleString('en-US')}** ${item.resource_type}.`;
+            await logPurchaseToSheet(interaction.user.tag, colName, qty, item.price);
+          }
+        }
+
+        if (item.role_id) {
+          const role = interaction.guild.roles.cache.get(item.role_id);
+          if (role) {
+            await interaction.member.roles.add(role);
+            rewardMsg += ` Assigned role **${role.name}**.`;
+          }
+        }
+
+        await interaction.reply({ content: `${EMOJIS.check} Successfully purchased **${item.name}** for **${item.price.toLocaleString('en-US')}** ${EMOJIS.coin}.\n${rewardMsg}`, ephemeral: true });
+        logActivity('🛒 Shop Purchase', `<@${interaction.user.id}> bought **${item.name}** for ${item.price} ${EMOJIS.coin}.\n${rewardMsg}`, 'Blue');
+
+      } catch (err) {
+        console.error(err);
+        interaction.reply({ content: `${EMOJIS.cross} Transaction failed.`, ephemeral: true });
+      }
+    } else if (interaction.customId === 'ticket_category_select') {
+      const catId = interaction.values[0];
+      try {
+        const { rows } = await safeQuery('SELECT * FROM ticket_categories WHERE id = $1', [catId]);
+        if (rows.length === 0) return interaction.reply({ content: 'Category not found.', ephemeral: true });
+
+        const category = rows[0];
+        let parsedQs = category.form_questions;
+        if (typeof parsedQs === 'string') try { parsedQs = JSON.parse(parsedQs); } catch (e) { }
+        if (!Array.isArray(parsedQs)) parsedQs = [];
+
+        if (parsedQs.length === 0) parsedQs = ['Please describe your request:'];
+
+        const modal = new ModalBuilder()
+          .setCustomId(`modal_ticket_create_${catId}`)
+          .setTitle(`Open Ticket: ${category.name}`);
+
+        parsedQs.slice(0, 5).forEach((q, i) => {
+          modal.addComponents(new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId(`q_${i}`)
+              .setLabel(q.substring(0, 45))
+              .setStyle(TextInputStyle.Paragraph)
+              .setRequired(true)
+          ));
+        });
+
+        await interaction.showModal(modal);
+      } catch (err) {
+        console.error(err);
+        interaction.reply({ content: 'Error opening form.', ephemeral: true });
+      }
     }
   } else if (interaction.isModalSubmit()) { // Handle Modal Submissions
     if (interaction.customId === 'modal_wizard_cat') {
