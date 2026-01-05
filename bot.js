@@ -269,6 +269,45 @@ async function logPurchaseToSheet(username, resource, resourceAmount, cost) {
   }
 }
 
+
+async function logItemPurchaseToSheet(username, itemName, price) {
+  const { GOOGLE_SHEET_ID, GOOGLE_SERVICE_ACCOUNT_EMAIL, GOOGLE_PRIVATE_KEY } = process.env;
+  if (!GOOGLE_SHEET_ID || !GOOGLE_SERVICE_ACCOUNT_EMAIL || !GOOGLE_PRIVATE_KEY) return;
+
+  try {
+    const jwt = new JWT({
+      email: GOOGLE_SERVICE_ACCOUNT_EMAIL,
+      key: GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+      scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+    });
+
+    const doc = new GoogleSpreadsheet(GOOGLE_SHEET_ID, jwt);
+    await doc.loadInfo();
+
+    const sheetTitle = 'Product Sales';
+    let sheet = doc.sheetsByTitle[sheetTitle];
+
+    if (!sheet) {
+      sheet = await doc.addSheet({ title: sheetTitle, headerValues: ['Timestamp', 'User', 'Item', 'Price'] });
+    } else {
+      try { await sheet.loadHeaderRow(); } catch (e) { }
+      if (!sheet.headerValues || sheet.headerValues.length === 0) {
+        await sheet.setHeaderRow(['Timestamp', 'User', 'Item', 'Price']);
+      }
+    }
+
+    await sheet.addRow({
+      Timestamp: new Date().toLocaleString('en-US', { timeZone: 'UTC' }),
+      User: username,
+      Item: itemName,
+      Price: price
+    });
+    console.log(`Successfully logged item purchase to "${sheetTitle}".`);
+  } catch (error) {
+    console.error('Error logging item purchase:', error);
+  }
+}
+
 // --- Helper Function to Parse Shorthand ---
 function parseShorthand(value) {
   if (typeof value !== 'string') return value;
@@ -963,6 +1002,35 @@ client.on('interactionCreate', async interaction => {
         await interaction.reply({ content: `❌ Failed to remove item.`, ephemeral: true });
       }
 
+    } else if (commandName === 'shop-stock') {
+      const adminIds = (process.env.ADMIN_IDS || '').split(',');
+      if (!adminIds.includes(interaction.user.id)) return interaction.reply({ content: '🚫 Admin only.', ephemeral: true });
+
+      const id = interaction.options.getInteger('id');
+      const amount = interaction.options.getInteger('amount');
+
+      try {
+        const { rows } = await safeQuery('SELECT * FROM shop_items WHERE id = $1', [id]);
+        if (rows.length === 0) return interaction.reply({ content: '❌ Item not found.', ephemeral: true });
+
+        const current = rows[0].stock;
+        let newStock;
+
+        if (current === -1) {
+          newStock = amount;
+          if (newStock < 0) newStock = 0;
+        } else {
+          newStock = current + amount;
+          if (newStock < 0) newStock = 0;
+        }
+
+        await safeQuery('UPDATE shop_items SET stock = $1 WHERE id = $2', [newStock, id]);
+        await interaction.reply({ content: `✅ Updated stock for **${rows[0].name}**. Old: ${current === -1 ? 'Infinite' : current}, Added: ${amount}, New: **${newStock}**.` });
+      } catch (e) {
+        console.error(e);
+        interaction.reply({ content: '❌ Error updating stock.', ephemeral: true });
+      }
+
     } else if (commandName === 'ticket-setup') {
       const adminIds = (process.env.ADMIN_IDS || '').split(',');
       if (!adminIds.includes(interaction.user.id)) {
@@ -1319,6 +1387,12 @@ client.on('interactionCreate', async interaction => {
         if (rows.length === 0) return interaction.reply({ content: `❌ Item no longer exists.`, ephemeral: true });
         const item = rows[0];
 
+
+        // Stock Check
+        if (item.stock !== -1 && item.stock <= 0) {
+          return interaction.reply({ content: `❌ This item is currently out of stock.`, ephemeral: true });
+        }
+
         const { rows: userRows } = await safeQuery('SELECT balance FROM users WHERE id = $1', [interaction.user.id]);
         const balance = userRows[0]?.balance || 0;
 
@@ -1328,6 +1402,11 @@ client.on('interactionCreate', async interaction => {
 
         await safeQuery('UPDATE users SET balance = balance - $1 WHERE id = $2', [item.price, interaction.user.id]);
 
+        // Decrement Stock
+        if (item.stock !== -1) {
+          await safeQuery('UPDATE shop_items SET stock = stock - 1 WHERE id = $1', [item.id]);
+        }
+
         let rewardMsg = '';
         if (item.resource_type) {
           const colName = item.resource_type.toLowerCase();
@@ -1336,7 +1415,11 @@ client.on('interactionCreate', async interaction => {
             await safeQuery(`UPDATE users SET ${colName} = ${colName} + $1 WHERE id = $2`, [qty, interaction.user.id]);
             rewardMsg = `Received **${qty.toLocaleString('en-US')}** ${item.resource_type}.`;
             await logPurchaseToSheet(interaction.user.tag, colName, qty, item.price);
+          } else {
+            await logItemPurchaseToSheet(interaction.user.tag, item.name, item.price);
           }
+        } else {
+          await logItemPurchaseToSheet(interaction.user.tag, item.name, item.price);
         }
 
         if (item.role_id) {

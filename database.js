@@ -163,7 +163,8 @@ async function initializeDatabase() {
         role_id TEXT,
         resource_type TEXT,
         quantity INTEGER DEFAULT 1,
-        requires_ticket INTEGER DEFAULT 0
+        requires_ticket INTEGER DEFAULT 0,
+        stock INTEGER DEFAULT -1
       )
     `);
 
@@ -182,6 +183,15 @@ async function initializeDatabase() {
     } catch (err) {
       if (!err.message.includes('duplicate column') && !err.message.includes('already exists')) {
         console.log('Migration note (shop_items requires_ticket):', err.message);
+      }
+    }
+
+    // Migration: Add stock to shop_items
+    try {
+      await client.query('ALTER TABLE shop_items ADD COLUMN stock INTEGER DEFAULT -1');
+    } catch (err) {
+      if (!err.message.includes('duplicate column') && !err.message.includes('already exists')) {
+        console.log('Migration note (shop_items stock):', err.message);
       }
     }
 

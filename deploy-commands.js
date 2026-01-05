@@ -115,6 +115,18 @@ const commands = [
         .setRequired(true)),
 
   new SlashCommandBuilder()
+    .setName('shop-stock')
+    .setDescription('Admin: Add stock to a shop item')
+    .addIntegerOption(option =>
+      option.setName('id')
+        .setDescription('ID of the shop item')
+        .setRequired(true))
+    .addIntegerOption(option =>
+      option.setName('amount')
+        .setDescription('Amount of stock to add (use negative to remove)')
+        .setRequired(true)),
+
+  new SlashCommandBuilder()
     .setName('giveaway')
     .setDescription('Admin: Create a paid giveaway')
     .addStringOption(option =>
