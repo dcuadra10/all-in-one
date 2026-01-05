@@ -370,9 +370,13 @@ async function seedShop() {
       const { rows } = await safeQuery('SELECT * FROM shop_items WHERE name = $1', [item.name]);
       if (rows.length === 0) {
         console.log(`Adding missing default item: ${item.name}`);
+        // Calculate ID manually for Postgres compatibility without sequence
+        const { rows: maxRows } = await safeQuery('SELECT MAX(id) as max_id FROM shop_items');
+        const nextId = (maxRows[0]?.max_id || 0) + 1;
+
         await safeQuery(
-          'INSERT INTO shop_items (name, price, emoji, description, resource_type, quantity, requires_ticket, stock) VALUES ($1, $2, $3, $4, $5, $6, 0, -1)',
-          [item.name, item.price, item.emoji, item.description, item.resource, item.quantity]
+          'INSERT INTO shop_items (id, name, price, emoji, description, resource_type, quantity, requires_ticket, stock) VALUES ($1, $2, $3, $4, $5, $6, $7, 0, -1)',
+          [nextId, item.name, item.price, item.emoji, item.description, item.resource, item.quantity]
         );
       }
     }
@@ -1040,11 +1044,15 @@ client.on('interactionCreate', async interaction => {
       const requiresTicket = interaction.options.getBoolean('requires_ticket') || false;
 
       try {
+        const { rows: maxRows } = await safeQuery('SELECT MAX(id) as max_id FROM shop_items');
+        const nextId = (maxRows[0]?.max_id || 0) + 1;
+
         await safeQuery(
-          'INSERT INTO shop_items (name, price, emoji, description, role_id, resource_type, quantity, requires_ticket) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
-          [name, price, emoji, description, role?.id, resource, quantity, requiresTicket ? 1 : 0]
+          'INSERT INTO shop_items (id, name, price, emoji, description, role_id, resource_type, quantity, requires_ticket, stock) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, -1)',
+          [nextId, name, price, emoji, description, role?.id, resource, quantity, requiresTicket ? 1 : 0]
         );
-        await interaction.reply({ content: `✅ Added item **${name}** (x${quantity}) to the shop for **${price}** 💰.`, ephemeral: true });
+
+        await interaction.reply({ content: `✅ Added **${name}** to the shop for ${price} 💰.`, ephemeral: true });
       } catch (error) {
         console.error('Error adding shop item:', error);
         await interaction.reply({ content: `❌ Failed to add item.`, ephemeral: true });
@@ -1134,11 +1142,15 @@ client.on('interactionCreate', async interaction => {
       const question = interaction.options.getString('question');
 
       // Validate date
+      // Validate date
       if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
         return interaction.reply({ content: '❌ Invalid date format. Use YYYY-MM-DD.', ephemeral: true });
       }
 
-      await safeQuery('INSERT INTO qotd_questions (date, question) VALUES ($1, $2)', [dateStr, question]);
+      const { rows: maxRows } = await safeQuery('SELECT MAX(id) as max_id FROM qotd_questions');
+      const nextId = (maxRows[0]?.max_id || 0) + 1;
+
+      await safeQuery('INSERT INTO qotd_questions (id, date, question) VALUES ($1, $2, $3)', [nextId, dateStr, question]);
       await interaction.reply({ content: `✅ Scheduled QOTD for **${dateStr}**: "${question}"`, ephemeral: true });
 
     } else if (commandName === 'qotd-list') {
