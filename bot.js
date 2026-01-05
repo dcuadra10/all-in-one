@@ -1652,7 +1652,9 @@ client.on('interactionCreate', async interaction => {
 
     await interaction.showModal(modal);
   }
-} else if (interaction.isStringSelectMenu()) {
+}
+
+if (interaction.isStringSelectMenu()) {
   if (interaction.customId === 'shop_buy_select') {
     const itemId = interaction.values[0];
     try {
