@@ -355,25 +355,26 @@ function parseDuration(durationString) {
 }
 
 // Helper function to seed the shop with default items
+// Helper function to seed the shop with default items
 async function seedShop() {
   try {
-    const { rows } = await safeQuery('SELECT count(*) as count FROM shop_items');
-    if (parseInt(rows[0].count) === 0) {
-      console.log('🛍️ Seeding shop with default items...');
-      const defaults = [
-        { name: 'Gold Package', price: 10, emoji: '🪙', description: '50,000 Gold', resource: 'gold', quantity: 50000 },
-        { name: 'Wood Package', price: 10, emoji: '🪵', description: '150,000 Wood', resource: 'wood', quantity: 150000 },
-        { name: 'Food Package', price: 10, emoji: '🌽', description: '150,000 Food', resource: 'food', quantity: 150000 },
-        { name: 'Stone Package', price: 10, emoji: '🪨', description: '112,000 Stone', resource: 'stone', quantity: 112000 },
-      ];
+    console.log('🛍️ Checking shop defaults...');
+    const defaults = [
+      { name: 'Gold Package', price: 10, emoji: '🪙', description: '50,000 Gold', resource: 'gold', quantity: 50000 },
+      { name: 'Wood Package', price: 10, emoji: '🪵', description: '150,000 Wood', resource: 'wood', quantity: 150000 },
+      { name: 'Food Package', price: 10, emoji: '🌽', description: '150,000 Food', resource: 'food', quantity: 150000 },
+      { name: 'Stone Package', price: 10, emoji: '🪨', description: '112,000 Stone', resource: 'stone', quantity: 112000 },
+    ];
 
-      for (const item of defaults) {
+    for (const item of defaults) {
+      const { rows } = await safeQuery('SELECT * FROM shop_items WHERE name = $1', [item.name]);
+      if (rows.length === 0) {
+        console.log(`Adding missing default item: ${item.name}`);
         await safeQuery(
-          'INSERT INTO shop_items (name, price, emoji, description, resource_type, quantity) VALUES ($1, $2, $3, $4, $5, $6)',
+          'INSERT INTO shop_items (name, price, emoji, description, resource_type, quantity, requires_ticket, stock) VALUES ($1, $2, $3, $4, $5, $6, 0, -1)',
           [item.name, item.price, item.emoji, item.description, item.resource, item.quantity]
         );
       }
-      console.log('✅ Shop seeded with default items.');
     }
   } catch (error) {
     console.error('Error seeding shop:', error);
