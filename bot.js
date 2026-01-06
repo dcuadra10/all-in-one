@@ -1787,7 +1787,15 @@ if (interaction.isStringSelectMenu()) {
       }
     }
   }
-} else if (interaction.isModalSubmit()) { // Handle Modal Submissions
+} else {
+  console.log(`[Select Menu] Unknown Custom ID: '${interaction.customId}'`);
+  if (!interaction.replied && !interaction.deferred) {
+    await interaction.reply({ content: `❌ Menu handler not found for ID: \`${interaction.customId}\`.`, ephemeral: true });
+  }
+}
+}
+
+if (interaction.isModalSubmit()) { // Handle Modal Submissions
   if (interaction.customId === 'modal_wizard_cat') {
     const name = interaction.fields.getTextInputValue('cat_name');
     const emoji = interaction.fields.getTextInputValue('cat_emoji');
