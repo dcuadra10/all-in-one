@@ -1770,7 +1770,8 @@ client.on('interactionCreate', async interaction => {
           modal.addComponents(new ActionRowBuilder().addComponents(
             new TextInputBuilder()
               .setCustomId(`q_${i}`)
-              .setLabel(q.substring(0, 45))
+              .setLabel(q.length > 45 ? q.substring(0, 42) + '...' : q)
+              .setPlaceholder(q.substring(0, 100))
               .setStyle(TextInputStyle.Paragraph)
               .setRequired(true)
           ));
@@ -1778,6 +1779,8 @@ client.on('interactionCreate', async interaction => {
 
         console.log('[Ticket Select] Showing modal...');
         await interaction.showModal(modal);
+        // Reset the select menu on the message to clear the user's selection
+        await interaction.message.edit({ components: interaction.message.components });
         console.log('[Ticket Select] Modal shown.');
       } catch (err) {
         console.error('[Ticket Select] Error opening form:', err);
