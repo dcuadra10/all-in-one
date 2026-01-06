@@ -1788,11 +1788,11 @@ client.on('interactionCreate', async interaction => {
           interaction.reply({ content: 'Error opening form (Check console).', ephemeral: true });
         }
       }
-    }
-  } else {
-    console.log(`[Select Menu] Unknown Custom ID: '${interaction.customId}'`);
-    if (!interaction.replied && !interaction.deferred) {
-      await interaction.reply({ content: `❌ Menu handler not found for ID: \`${interaction.customId}\`.`, ephemeral: true });
+    } else {
+      console.log(`[Select Menu] Unknown Custom ID: '${interaction.customId}'`);
+      if (!interaction.replied && !interaction.deferred) {
+        await interaction.reply({ content: `❌ Menu handler not found for ID: \`${interaction.customId}\`.`, ephemeral: true });
+      }
     }
   }
 
