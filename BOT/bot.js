@@ -1289,7 +1289,9 @@ client.on('interactionCreate', async interaction => {
             let questions = [];
             try {
               const rawData = rows[0].form_questions;
-              if (rawData && typeof rawData === 'string' && rawData.trim().length > 0) {
+              if (Array.isArray(rawData)) {
+                questions = rawData;
+              } else if (rawData && typeof rawData === 'string' && rawData.trim().length > 0) {
                 questions = JSON.parse(rawData);
               }
             } catch (e) {
@@ -1304,7 +1306,8 @@ client.on('interactionCreate', async interaction => {
 
             const row = new ActionRowBuilder().addComponents(
               new ButtonBuilder().setCustomId(`wizard_add_single_q_${categoryId}`).setLabel('Add Question').setStyle(ButtonStyle.Primary),
-              new ButtonBuilder().setCustomId(`wizard_clear_q_${categoryId}`).setLabel('Clear All').setStyle(ButtonStyle.Danger),
+              new ButtonBuilder().setCustomId(`wizard_delete_q_menu_${categoryId}`).setLabel('Delete Question').setStyle(ButtonStyle.Danger),
+              new ButtonBuilder().setCustomId(`wizard_clear_q_${categoryId}`).setLabel('Clear All').setStyle(ButtonStyle.Secondary),
               new ButtonBuilder().setCustomId(`wizard_finish_${categoryId}`).setLabel('Finish').setStyle(ButtonStyle.Success)
             );
 
@@ -1314,8 +1317,6 @@ client.on('interactionCreate', async interaction => {
             console.error('Error starting question editor:', err);
             await interaction.editReply({ content: '❌ Failed to create editor thread.' });
           }
-          // Don't process other updates if entering wizard, or process them? 
-          // Let's process others too if provided.
         }
 
         const updates = [];
@@ -2138,6 +2139,41 @@ client.on('interactionCreate', async interaction => {
         console.error('Error creating ticket thread:', err);
         await interaction.editReply({ content: '❌ Failed to create ticket thread. Ensure the bot has "Create Private Threads" and "Manage Threads" permissions or that the channel allows threads.' });
       }
+    } else if (interaction.customId.startsWith('wizard_delete_q_select_')) {
+      const catId = interaction.customId.split('_')[4];
+      const indexToDelete = parseInt(interaction.values[0]);
+
+      const { rows } = await db.query('SELECT * FROM ticket_categories WHERE id = $1', [catId]);
+      if (rows.length === 0) return interaction.reply({ content: 'Category not found.', ephemeral: true });
+
+      let questions = [];
+      try {
+        const rawData = rows[0].form_questions;
+        if (Array.isArray(rawData)) {
+          questions = rawData;
+        } else if (rawData && typeof rawData === 'string' && rawData.trim().length > 0) {
+          questions = JSON.parse(rawData);
+        }
+      } catch (e) { questions = []; }
+
+      if (indexToDelete >= 0 && indexToDelete < questions.length) {
+        questions.splice(indexToDelete, 1);
+        await db.query('UPDATE ticket_categories SET form_questions = $1 WHERE id = $2', [JSON.stringify(questions), catId]);
+      }
+
+      const embed = new EmbedBuilder()
+        .setTitle(rows[0].name ? `Edit Questions: ${rows[0].name}` : 'Edit Questions')
+        .setDescription(`Current Questions:\n${questions.map((q, i) => `${i + 1}. ${q}`).join('\n') || 'None'}`)
+        .setColor('Purple');
+
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`wizard_add_single_q_${catId}`).setLabel('Add Question').setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId(`wizard_delete_q_menu_${catId}`).setLabel('Delete Question').setStyle(ButtonStyle.Danger),
+        new ButtonBuilder().setCustomId(`wizard_clear_q_${catId}`).setLabel('Clear All').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId(`wizard_finish_${catId}`).setLabel('Finish').setStyle(ButtonStyle.Success)
+      );
+
+      await interaction.update({ embeds: [embed], components: [row] });
     }
   } else if (interaction.isButton()) { // Handle Button Clicks
     if (interaction.customId === 'wizard_create_cat_btn') {
@@ -2168,6 +2204,54 @@ client.on('interactionCreate', async interaction => {
       await interaction.reply({ content: '✅ Setup finished! The category has been configured.', ephemeral: true });
       try { await interaction.channel.setArchived(true); } catch (e) { }
       return;
+    } else if (interaction.customId.startsWith('wizard_delete_q_menu_')) {
+      const catId = interaction.customId.split('_')[4];
+      const { rows } = await db.query('SELECT form_questions FROM ticket_categories WHERE id = $1', [catId]);
+      if (rows.length === 0) return interaction.reply({ content: 'Category not found.', ephemeral: true });
+
+      let questions = [];
+      try {
+        const rawData = rows[0].form_questions;
+        if (Array.isArray(rawData)) {
+          questions = rawData;
+        } else if (rawData && typeof rawData === 'string' && rawData.trim().length > 0) {
+          questions = JSON.parse(rawData);
+        }
+      } catch (e) { questions = []; }
+
+      if (questions.length === 0) return interaction.reply({ content: 'No questions to delete.', ephemeral: true });
+
+      const select = new StringSelectMenuBuilder()
+        .setCustomId(`wizard_delete_q_select_${catId}`)
+        .setPlaceholder('Select a question to delete')
+        .addOptions(questions.map((q, i) => ({
+          label: q.length > 50 ? q.substring(0, 47) + '...' : q,
+          value: i.toString(),
+          description: `Question #${i + 1}`
+        })));
+
+      const row = new ActionRowBuilder().addComponents(select);
+      const cancelRow = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`wizard_cancel_delete_${catId}`).setLabel('Cancel').setStyle(ButtonStyle.Secondary));
+
+      await interaction.update({ components: [row, cancelRow] });
+
+    } else if (interaction.customId.startsWith('wizard_cancel_delete_')) {
+      const catId = interaction.customId.split('_')[3];
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`wizard_add_single_q_${catId}`).setLabel('Add Question').setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId(`wizard_delete_q_menu_${catId}`).setLabel('Delete Question').setStyle(ButtonStyle.Danger),
+        new ButtonBuilder().setCustomId(`wizard_clear_q_${catId}`).setLabel('Clear All').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId(`wizard_finish_${catId}`).setLabel('Finish').setStyle(ButtonStyle.Success)
+      );
+      await interaction.update({ components: [row] });
+
+    } else if (interaction.customId.startsWith('wizard_clear_q_')) {
+      const catId = interaction.customId.split('_')[3];
+      await db.query('UPDATE ticket_categories SET form_questions = $1 WHERE id = $2', [JSON.stringify([]), catId]);
+
+      const embed = EmbedBuilder.from(interaction.message.embeds[0]);
+      embed.setDescription('Current Questions:\nNone');
+      await interaction.update({ embeds: [embed] });
     }
 
     if (interaction.customId === 'close_ticket_btn') {
