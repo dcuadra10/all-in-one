@@ -1286,7 +1286,16 @@ client.on('interactionCreate', async interaction => {
             });
             await thread.members.add(interaction.user.id);
 
-            const questions = rows[0].form_questions ? JSON.parse(rows[0].form_questions) : [];
+            let questions = [];
+            try {
+              const rawData = rows[0].form_questions;
+              if (rawData && typeof rawData === 'string' && rawData.trim().length > 0) {
+                questions = JSON.parse(rawData);
+              }
+            } catch (e) {
+              console.error('Error parsing existing questions:', e);
+              questions = [];
+            }
 
             const embed = new EmbedBuilder()
               .setTitle(`Edit Questions: ${currentName}`)
