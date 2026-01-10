@@ -102,6 +102,16 @@ async function initializeDatabase() {
       }
     }
 
+    // Migration: Add daily_count and last_message_date to message_counts
+    try {
+      await client.query('ALTER TABLE message_counts ADD COLUMN daily_count BIGINT DEFAULT 0');
+      await client.query('ALTER TABLE message_counts ADD COLUMN last_message_date TEXT');
+    } catch (err) {
+      if (!err.message.includes('duplicate column') && !err.message.includes('already exists')) {
+        console.log('Migration note (message_counts daily):', err.message);
+      }
+    }
+
     // Migration: Fix missing PK/Unique constraint for message_counts (fixing ON CONFLICT error)
     try {
       await client.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_message_counts_user_id ON message_counts(user_id)');
@@ -329,6 +339,20 @@ async function initializeDatabase() {
         pending_questions ${isSqlite ? 'TEXT' : 'JSONB'},
         current_question_index INTEGER DEFAULT 0,
         answers ${isSqlite ? 'TEXT' : 'JSONB'}
+      )
+    `);
+
+    // Ticket Transcripts for Backups
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS ticket_transcripts (
+        id ${isSqlite ? 'INTEGER PRIMARY KEY AUTOINCREMENT' : 'SERIAL PRIMARY KEY'},
+        channel_id TEXT NOT NULL,
+        guild_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        transcript TEXT,
+        reason TEXT,
+        closed_by TEXT,
+        closed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
 

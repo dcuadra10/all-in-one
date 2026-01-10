@@ -82,6 +82,7 @@ const client = new Client({
 
 const cachedInvites = new Map(); // code -> uses
 const voiceTimes = new Map(); // userId -> startTime
+const ticketCreationSessions = new Map(); // userId -> { catId, answers: [] }
 
 // Configuration: Roles that cannot join giveaways (from .env)
 const EXCLUDED_GIVEAWAY_ROLES = (process.env.EXCLUDED_GIVEAWAY_ROLES || 'bot,bots,muted,banned,restricted,excluded').split(',');
@@ -448,94 +449,24 @@ client.once(Events.ClientReady, async () => {
         console.error('Error in QOTD scheduler:', err);
       }
     }
-  }, 60000); // Check every minute
-});
+  }, 60 * 1000); // Check every minute
 
-client.on('guildMemberAdd', async member => {
-  const guild = member.guild;
-
-  // Send welcome message
-  try {
-    const welcomeChannelId = process.env.WELCOME_CHANNEL_ID;
-    if (welcomeChannelId) {
-      const welcomeChannel = await guild.channels.fetch(welcomeChannelId);
-      if (welcomeChannel && welcomeChannel.isTextBased()) {
-        // Channel IDs
-        const verificationChannelId = '1421649198331199619';
-        const informationChannelId = '1421306924363681912';
-        const usefulLinksChannelId = '1424495381202473141';
-        const ticketerChannelId = '1413983349969780787';
-
-        const welcomeVideoUrl = process.env.WELCOME_VIDEO_URL; // Define welcomeVideoUrl here
-
-        const welcomeEmbed = new EmbedBuilder()
-          .setDescription(`# Welcome to Sovereign Empire\n<@${member.id}>\n\n> 📜 <#${informationChannelId}>\n> 🔗 <#${usefulLinksChannelId}>\n> 🔐 <#${verificationChannelId}>\n> 💬 <#${ticketerChannelId}>`)
-          .setColor('Gold')
-          .setImage(process.env.WELCOME_VIDEO_URL || null);
-
-        const welcomeRow = new ActionRowBuilder()
-          .addComponents(
-            new ButtonBuilder()
-              .setLabel('📜 Information')
-              .setStyle(ButtonStyle.Link)
-              .setURL(`https://discord.com/channels/${guild.id}/${informationChannelId}`),
-            new ButtonBuilder()
-              .setLabel('🔗 Useful Links')
-              .setStyle(ButtonStyle.Link)
-              .setURL(`https://discord.com/channels/${guild.id}/${usefulLinksChannelId}`),
-            new ButtonBuilder()
-              .setLabel('🔐 Verification')
-              .setStyle(ButtonStyle.Link)
-              .setURL(`https://discord.com/channels/${guild.id}/${verificationChannelId}`),
-            new ButtonBuilder()
-              .setLabel('💬 Support')
-              .setStyle(ButtonStyle.Link)
-              .setURL(`https://discord.com/channels/${guild.id}/${ticketerChannelId}`)
-          );
-
-        await welcomeChannel.send({ embeds: [welcomeEmbed], components: [welcomeRow] });
+  // Backup Cleanup Scheduler (Check every hour)
+  setInterval(async () => {
+    try {
+      // Delete backups older than 7 days
+      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      const { rowCount } = await safeQuery('DELETE FROM ticket_transcripts WHERE closed_at < $1', [sevenDaysAgo]);
+      if (rowCount > 0) {
+        console.log(`🗑️ Deleted ${rowCount} old ticket backups.`);
       }
+    } catch (err) {
+      console.error('Error cleaning up backups:', err);
     }
-  } catch (error) {
-    console.error('Error sending welcome message:', error);
-  }
-
-  // Handle invite rewards
-  const newInvites = await guild.invites.fetch();
-  let inviterId = null;
-  newInvites.forEach(invite => {
-    const oldUses = cachedInvites.get(invite.code) || 0;
-    if (invite.uses > oldUses) {
-      inviterId = invite.inviter.id;
-    }
-    cachedInvites.set(invite.code, invite.uses);
-  });
-  if (inviterId && inviterId !== member.id) { // avoid self
-    // Check if this member was already invited by this inviter before
-    const checkResult = await safeQuery(
-      'SELECT * FROM invited_members WHERE inviter_id = $1 AND invited_member_id = $2',
-      [inviterId, member.id]
-    );
-
-    // Only give reward if this is the first time this member was invited by this inviter
-    if (!checkResult.rows || checkResult.rows.length === 0) {
-      await db.query('INSERT INTO users (id) VALUES ($1) ON CONFLICT (id) DO NOTHING', [inviterId]);
-      await db.query('UPDATE users SET balance = balance + 20 WHERE id = $1', [inviterId]);
-      await db.query('INSERT INTO invites (user_id, invites) VALUES ($1, 1) ON CONFLICT (user_id) DO UPDATE SET invites = invites.invites + 1', [inviterId]);
-
-      // Record that this member was invited by this inviter
-      await db.query(
-        'INSERT INTO invited_members (inviter_id, invited_member_id) VALUES ($1, $2) ON CONFLICT (inviter_id, invited_member_id) DO NOTHING',
-        [inviterId, member.id]
-      );
-
-      logActivity('💌 Invite Reward', `<@${inviterId}> received **20** 💰 for inviting ${member.user.tag}.`, 'Green');
-    } else {
-      // Member was already invited before, no reward
-      console.log(`Member ${member.user.tag} (${member.id}) was already invited by ${inviterId} before. No duplicate reward.`);
-    }
-  }
+  }, 60 * 60 * 1000);
 });
+
+/* Welcome Module Removed */
 
 client.on('messageCreate', async message => {
   if (message.author.bot) return;
@@ -556,7 +487,6 @@ client.on('messageCreate', async message => {
         const currentIndex = ticket.current_question_index || 0;
 
         if (currentIndex < pendingQs.length) {
-          // This message IS the answer to questions[currentIndex]
           let answers = [];
           try {
             if (ticket.answers) {
@@ -564,8 +494,22 @@ client.on('messageCreate', async message => {
             }
           } catch (e) { }
 
-          const currentQ = pendingQs[currentIndex];
-          answers.push({ question: currentQ, answer: message.content });
+          const currentQ = pendingQs[currentIndex]; // Object {text, type, options}
+
+          let answerContent = message.content;
+
+          // Validation for File Type
+          if (currentQ.type === 'file') {
+            if (message.attachments.size === 0) {
+              // If strict, we could return here and ask for file.
+              // For now, let's accept text if they didn't upload, or maybe they posted a link.
+              // But let's check attachments
+            } else {
+              answerContent = message.attachments.first().url;
+            }
+          }
+
+          answers.push({ question: currentQ.text, answer: answerContent });
 
           const nextIndex = currentIndex + 1;
 
@@ -577,18 +521,27 @@ client.on('messageCreate', async message => {
             const nextQ = pendingQs[nextIndex];
             const embed = new EmbedBuilder()
               .setTitle(`Question ${nextIndex + 1}/${pendingQs.length}`)
-              .setDescription(nextQ)
+              .setDescription(nextQ.text)
               .setColor('Blue');
-            await message.channel.send({ embeds: [embed] });
+
+            const components = [];
+            if (nextQ.type === 'dropdown' && nextQ.options) {
+              const select = new StringSelectMenuBuilder()
+                .setCustomId('ticket_interview_dropdown')
+                .setPlaceholder('Select an option...')
+                .addOptions(nextQ.options.map(opt => ({ label: opt, value: opt })));
+              components.push(new ActionRowBuilder().addComponents(select));
+            } else if (nextQ.type === 'file') {
+              embed.setFooter({ text: 'Please upload a file/image as your answer.' });
+            }
+
+            await message.channel.send({ embeds: [embed], components: components });
           } else {
             // Finished!
-            // Clear pending questions to mark interview as done
             await safeQuery('UPDATE tickets SET pending_questions = NULL WHERE channel_id = $1', [message.channelId]);
 
-            // Generate Final Report
             const formattedAnswers = answers.map((a, i) => `**${i + 1}. ${a.question}**\n${a.answer}`).join('\n\n');
 
-            // Fetch category info to ping role
             const { rows: catRows } = await safeQuery('SELECT * FROM ticket_categories WHERE id = $1', [ticket.category_id]);
             const category = catRows[0];
             const rolePing = category ? `<@&${category.staff_role_id}>` : '';
@@ -599,14 +552,13 @@ client.on('messageCreate', async message => {
               .setColor('Green')
               .setFooter({ text: 'Interview Complete' });
 
-            const closeButton = new ActionRowBuilder().addComponents(
-              new ButtonBuilder().setCustomId('close_ticket_btn').setLabel('Close Ticket').setStyle(ButtonStyle.Danger).setEmoji('🔒')
+            const closeButtons = new ActionRowBuilder().addComponents(
+              new ButtonBuilder().setCustomId('close_ticket_btn').setLabel('Close Ticket').setStyle(ButtonStyle.Danger).setEmoji('🔒'),
+              new ButtonBuilder().setCustomId('close_ticket_reason_btn').setLabel('Close with Reason').setStyle(ButtonStyle.Secondary).setEmoji('📝')
             );
 
-            await message.channel.send({ content: `${rolePing} <@${message.author.id}> has completed the application!`, embeds: [embed], components: [closeButton] });
+            await message.channel.send({ content: `${rolePing} <@${message.author.id}> has completed the application!`, embeds: [embed], components: [closeButtons] });
           }
-          // Return early so we don't spam XP messages inside the interview, but optionally we can allow XP.
-          // Let's allow XP generation as normal.
         }
       }
     }
@@ -614,6 +566,7 @@ client.on('messageCreate', async message => {
 
   await db.query('INSERT INTO users (id) VALUES ($1) ON CONFLICT (id) DO NOTHING', [message.author.id]);
 
+  /*
   // Increment total message count
   const { rows } = await db.query(`
       INSERT INTO message_counts (user_id, count, rewarded_messages)
@@ -622,6 +575,25 @@ client.on('messageCreate', async message => {
       DO UPDATE SET count = message_counts.count + 1
       RETURNING count, rewarded_messages
   `, [message.author.id]);
+
+  const { count, rewarded_messages } = rows[0];
+  */
+
+  // Increment total and daily message count  
+  const todayStr = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+  const { rows } = await db.query(`
+      INSERT INTO message_counts (user_id, count, rewarded_messages, daily_count, last_message_date)
+      VALUES ($1, 1, 0, 1, $2)
+      ON CONFLICT (user_id)
+      DO UPDATE SET 
+        count = message_counts.count + 1,
+        daily_count = CASE 
+          WHEN message_counts.last_message_date = $2 THEN message_counts.daily_count + 1 
+          ELSE 1 
+        END,
+        last_message_date = $2
+      RETURNING count, rewarded_messages
+  `, [message.author.id, todayStr]);
 
   const { count, rewarded_messages } = rows[0];
   const unrewardedCount = count - rewarded_messages;
@@ -805,7 +777,7 @@ client.on('interactionCreate', async interaction => {
         const { rows: items } = await safeQuery('SELECT * FROM shop_items ORDER BY price ASC');
 
         // Check balance
-        const { rows: userRows } = await safeQuery('SELECT balance FROM users WHERE id = $1', [interaction.user.id]);
+        const { rows: userRows } = await safeQuery('SELECT balance FROM users WHERE users.id = $1', [interaction.user.id]);
         const balance = userRows[0]?.balance || 0;
 
         let description = `Select an item below to purchase.\n\n💰 **Your Balance:** ${balance.toLocaleString('en-US')} 💰\n\n`;
@@ -888,53 +860,75 @@ client.on('interactionCreate', async interaction => {
 
       await interaction.reply({ embeds: [embed] });
     } else if (commandName === 'daily') {
-      await interaction.deferReply();
-      const userId = interaction.user.id;
-      const today = new Date();
-      const todayStr = today.toISOString().slice(0, 10); // YYYY-MM-DD
+      const subcommand = interaction.options.getSubcommand(false) || 'claim'; // Default to claim if no subcommand for backward compatibility if possible, though Discord usually enforces it.
 
-      try {
-        const { rows } = await db.query('SELECT last_daily, daily_streak FROM users WHERE id = $1', [userId]);
+      if (subcommand === 'stats') {
+        await interaction.deferReply();
+        const targetUser = interaction.options.getUser('user') || interaction.user;
+        // Query message_counts for daily_count and last_message_date
+        const todayStr = new Date().toISOString().split('T')[0];
+
+        const { rows } = await db.query('SELECT daily_count, last_message_date FROM message_counts WHERE user_id = $1', [targetUser.id]);
         const row = rows[0];
 
-        const lastDaily = row?.last_daily ? new Date(row.last_daily).toISOString().slice(0, 10) : null;
-        let streak = row?.daily_streak || 0;
-
-        if (lastDaily === todayStr) {
-          // Calculate time until next claim (UTC midnight)
-          const tomorrow = new Date(today);
-          tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
-          tomorrow.setUTCHours(0, 0, 0, 0);
-          return await interaction.editReply({ content: `You have already claimed your daily reward today! Please come back <t:${Math.floor(tomorrow.getTime() / 1000)}:R>.` });
+        let dailyCount = 0;
+        if (row && row.last_message_date === todayStr) {
+          dailyCount = row.daily_count || 0;
         }
 
-        const yesterday = new Date(today);
-        yesterday.setDate(yesterday.getDate() - 1);
-        const yesterdayStr = yesterday.toISOString().slice(0, 10);
+        await interaction.editReply({
+          content: `📅 **Daily Stats for ${targetUser.username}**\n\n💬 Messages sent today (since 00:00 UTC): **${dailyCount}**`
+        });
+      } else {
+        // Default: Claim
+        await interaction.deferReply();
+        const userId = interaction.user.id;
+        const today = new Date();
+        const todayStr = today.toISOString().slice(0, 10); // YYYY-MM-DD
 
-        if (lastDaily === yesterdayStr) {
-          // Continue the streak
-          streak++;
-        } else {
-          // Reset the streak
-          streak = 1;
+        try {
+          const { rows } = await db.query('SELECT last_daily, daily_streak FROM users WHERE id = $1', [userId]);
+          const row = rows[0];
+
+          const lastDaily = row?.last_daily ? new Date(row.last_daily).toISOString().slice(0, 10) : null;
+          let streak = row?.daily_streak || 0;
+
+          if (lastDaily === todayStr) {
+            // Calculate time until next claim (UTC midnight)
+            const tomorrow = new Date(today);
+            tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+            tomorrow.setUTCHours(0, 0, 0, 0);
+            return await interaction.editReply({ content: `You have already claimed your daily reward today! Please come back <t:${Math.floor(tomorrow.getTime() / 1000)}:R>.` });
+          }
+
+          const yesterday = new Date(today);
+          yesterday.setDate(yesterday.getDate() - 1);
+          const yesterdayStr = yesterday.toISOString().slice(0, 10);
+
+          if (lastDaily === yesterdayStr) {
+            // Continue the streak
+            streak++;
+          } else {
+            // Reset the streak
+            streak = 1;
+          }
+
+          // Cap the streak at 15 and calculate reward (5 + streak, max 20)
+          const cappedStreak = Math.min(streak, 15);
+          const reward = 5 + cappedStreak;
+
+          await db.query('UPDATE users SET balance = balance + $1, last_daily = $2, daily_streak = $3 WHERE id = $4', [reward, todayStr, streak, userId]);
+
+          const replyEmbed = new EmbedBuilder()
+            .setColor('Gold')
+            .setDescription(`## 🎉 Daily Reward\nReceived **${reward}** 💰\nStreak: ${streak} days`);
+
+          await interaction.editReply({ embeds: [replyEmbed] });
+          logActivity(`🎁 Daily Reward`, `<@${userId}> claimed their daily reward of **${reward}** 💰 (Streak: ${streak}).`, 'Aqua');
+        } catch (err) {
+          console.error(err);
+          return await interaction.editReply({ content: '❌ An error occurred while processing your daily reward.' });
         }
-
-        // Cap the streak at 15 and calculate reward (5 + streak, max 20)
-        const cappedStreak = Math.min(streak, 15);
-        const reward = 5 + cappedStreak;
-
-        await db.query('UPDATE users SET balance = balance + $1, last_daily = $2, daily_streak = $3 WHERE id = $4', [reward, todayStr, streak, userId]);
-
-        const replyEmbed = new EmbedBuilder()
-          .setColor('Gold')
-          .setDescription(`## 🎉 Daily Reward\nReceived **${reward}** 💰\nStreak: ${streak} days`);
-
-        await interaction.editReply({ embeds: [replyEmbed] });
-        logActivity(`🎁 Daily Reward`, `<@${userId}> claimed their daily reward of **${reward}** 💰 (Streak: ${streak}).`, 'Aqua');
-      } catch (err) {
-        console.error(err);
-        return await interaction.editReply({ content: '❌ An error occurred while processing your daily reward.' });
       }
     } else if (commandName === 'stats') {
       await interaction.deferReply();
@@ -1494,6 +1488,45 @@ client.on('interactionCreate', async interaction => {
       // Update DB
       await db.query('UPDATE tickets SET closed = TRUE WHERE channel_id = $1', [thread.id]);
 
+      // Log the closure
+      logActivity(
+        '🔒 Ticket Closed',
+        `**Ticket:** ${interaction.channel.name}\n**Closed by:** <@${interaction.user.id}>\n**Owner:** <@${ticket.user_id}>\n**Reason:** No reason provided.`,
+        'Red'
+      );
+
+      // Create Transcript
+      try {
+        let transcriptText = `TRANSCRIPT FOR TICKET: ${interaction.channel.name} (${interaction.channelId})\n`;
+        transcriptText += `USER: ${ticket.user_id}\n`;
+        transcriptText += `CLOSED BY: ${interaction.user.tag} (${interaction.user.id})\n`;
+        transcriptText += `REASON: No reason provided.\n`;
+        transcriptText += `DATE: ${new Date().toISOString()}\n`;
+        transcriptText += `--------------------------------------------------\n\n`;
+
+        if (ticket.pending_questions && ticket.answers) {
+          // Interview Mode
+          const answers = typeof ticket.answers === 'string' ? JSON.parse(ticket.answers) : ticket.answers;
+          answers.forEach((a, i) => {
+            transcriptText += `Q${i + 1}: ${a.question}\nA: ${a.answer}\n\n`;
+          });
+        }
+
+        // Fetch last 100 messages for context if needed (optional simple text dump)
+        const messages = await interaction.channel.messages.fetch({ limit: 100 });
+        messages.reverse().forEach(m => {
+          transcriptText += `[${m.createdAt.toISOString()}] ${m.author.tag}: ${m.content} ${m.attachments.size > 0 ? '[Attachment]' : ''}\n`;
+        });
+
+        // Save to Backup Table
+        await db.query(
+          'INSERT INTO ticket_transcripts (channel_id, guild_id, user_id, transcript, reason, closed_by, closed_at) VALUES ($1, $2, $3, $4, $5, $6, NOW())',
+          [interaction.channelId, interaction.guildId, ticket.user_id, transcriptText, 'No reason provided.', interaction.user.id]
+        );
+      } catch (err) {
+        console.error('Error creating transcript:', err);
+      }
+
       // Delete thread after 5 seconds
       setTimeout(async () => {
         try {
@@ -1652,6 +1685,28 @@ client.on('interactionCreate', async interaction => {
         console.error('❌ Error resetting data:', error);
         await interaction.editReply({ content: `❌ Error resetting data: ${error.message}\n\nPlease check the console for more details.` });
       }
+
+    } else if (commandName === 'ticket-backup') {
+      const adminIds = (process.env.ADMIN_IDS || '').split(',');
+      if (!adminIds.includes(interaction.user.id)) return interaction.reply({ content: '🚫 Admin only.', ephemeral: true });
+
+      const ticketId = interaction.options.getString('ticket_id');
+      const { rows } = await safeQuery('SELECT * FROM ticket_transcripts WHERE channel_id = $1', [ticketId]);
+
+      if (rows.length === 0) return interaction.reply({ content: '❌ Backup not found or expired (backups are kept for 7 days).', ephemeral: true });
+
+      const transcript = rows[0];
+      const buffer = Buffer.from(transcript.transcript || 'No Content', 'utf-8');
+
+      const attachment = new AttachmentBuilder(buffer, { name: `transcript-${transcript.channel_id}.txt` });
+
+      const embed = new EmbedBuilder()
+        .setTitle('📂 Ticket Transcript')
+        .setDescription(`**Ticket ID:** ${transcript.channel_id}\n**User:** <@${transcript.user_id}>\n**Closed By:** <@${transcript.closed_by}>\n**Reason:** ${transcript.reason}\n**Date:** <t:${Math.floor(new Date(transcript.closed_at).getTime() / 1000)}:f>`)
+        .setColor('Blue');
+
+      await interaction.reply({ embeds: [embed], files: [attachment], ephemeral: true });
+
     } else if (commandName === 'add-emoji') {
       const adminIds = (process.env.ADMIN_IDS || '').split(',');
       if (!adminIds.includes(interaction.user.id)) {
@@ -1770,8 +1825,8 @@ client.on('interactionCreate', async interaction => {
           if (['gold', 'wood', 'food', 'stone'].includes(colName)) {
             const qty = item.quantity || 1;
             await safeQuery(`UPDATE users SET ${colName} = ${colName} + $1 WHERE id = $2`, [qty, interaction.user.id]);
-            rewardMsg = `Received **${qty.toLocaleString('en-US')}** ${item.resource_type}.`;
             await logPurchaseToSheet(interaction.user.tag, colName, qty, item.price);
+            rewardMsg = `Received **${qty.toLocaleString('en-US')}** ${item.resource_type}.`;
           } else {
             await logItemPurchaseToSheet(interaction.user.tag, item.name, item.price);
           }
@@ -1816,6 +1871,25 @@ client.on('interactionCreate', async interaction => {
           }
         }
 
+        // Update the shop embed with new balance
+        try {
+          const { rows: updatedCols } = await safeQuery('SELECT balance FROM users WHERE id = $1', [interaction.user.id]);
+          const newBalance = updatedCols[0]?.balance || 0;
+
+          const oldEmbed = interaction.message.embeds[0];
+          if (oldEmbed && oldEmbed.description) {
+            const newDescription = oldEmbed.description.replace(
+              /💰 \*\*Your Balance:\*\* [\d,.]+ 💰/,
+              `💰 **Your Balance:** ${newBalance.toLocaleString('en-US')} 💰`
+            );
+
+            const newEmbed = EmbedBuilder.from(oldEmbed).setDescription(newDescription);
+            await interaction.message.edit({ embeds: [newEmbed] });
+          }
+        } catch (e) {
+          console.error("Failed to update shop message balance:", e);
+        }
+
         await interaction.reply({ content: `✅ Successfully purchased **${item.name}** for **${item.price.toLocaleString('en-US')}** 💰.\n${rewardMsg}`, ephemeral: true });
         logActivity('🛒 Shop Purchase', `<@${interaction.user.id}> bought **${item.name}** for ${item.price} 💰.\n${rewardMsg}`, 'Blue');
 
@@ -1845,60 +1919,18 @@ client.on('interactionCreate', async interaction => {
 
         console.log(`[Ticket Select] Questions to ask: ${parsedQs.length}`);
 
-        if (parsedQs.length > 5) {
-          // Interview Mode
-          await interaction.deferReply({ ephemeral: true });
+        // Initialize session
+        const totalPages = Math.ceil(parsedQs.length / 5);
+        ticketCreationSessions.set(interaction.user.id, {
+          catId: catId,
+          questions: parsedQs,
+          answers: [],
+          totalPages: totalPages
+        });
 
-          const guild = interaction.guild;
-          const safeName = interaction.user.username.replace(/[^a-zA-Z0-9-]/g, '');
-          const channelName = `ticket-${safeName}-${category.name}`.substring(0, 32);
-
-          try {
-            // Create Thread
-            const ticketThread = await interaction.channel.threads.create({
-              name: channelName,
-              type: ChannelType.PrivateThread,
-              reason: `Ticket created by ${interaction.user.tag}`,
-              autoArchiveDuration: 1440
-            });
-            await ticketThread.members.add(interaction.user.id);
-
-            // Insert into DB with pending_questions
-            await safeQuery(
-              'INSERT INTO tickets (channel_id, guild_id, user_id, category_id, pending_questions, current_question_index, answers) VALUES ($1, $2, $3, $4, $5, 0, $6)',
-              [ticketThread.id, guild.id, interaction.user.id, category.id, JSON.stringify(parsedQs), JSON.stringify([])]
-            );
-
-            const welcomeEmbed = new EmbedBuilder()
-              .setTitle(`${category.emoji} ${category.name} Ticket`)
-              .setDescription(`Welcome <@${interaction.user.id}>!\n\nThis application has **${parsedQs.length}** questions.\nPlease answer them one by one below.`)
-              .setColor('Green');
-
-            await ticketThread.send({ embeds: [welcomeEmbed] });
-
-            // Send First Question
-            const firstQ = parsedQs[0];
-            const qEmbed = new EmbedBuilder()
-              .setTitle(`Question 1/${parsedQs.length}`)
-              .setDescription(firstQ)
-              .setColor('Blue');
-
-            await ticketThread.send({ embeds: [qEmbed] });
-
-            await interaction.editReply({ content: `✅ Ticket created: <#${ticketThread.id}>` });
-
-            // Reset select menu
-            await interaction.message.edit({ components: interaction.message.components });
-
-          } catch (err) {
-            console.error('Error creating interview thread:', err);
-            await interaction.editReply({ content: '❌ Failed to create ticket thread.' });
-          }
-          return;
-        }
-
+        // Show first modal (Page 0)
         const modal = new ModalBuilder()
-          .setCustomId(`modal_ticket_create_${catId}`)
+          .setCustomId(`modal_ticket_submit_${catId}_0`)
           .setTitle(`Open Ticket: ${category.name.substring(0, 45)}`);
 
         parsedQs.slice(0, 5).forEach((q, i) => {
@@ -1912,16 +1944,21 @@ client.on('interactionCreate', async interaction => {
           ));
         });
 
-        console.log('[Ticket Select] Showing modal...');
         await interaction.showModal(modal);
-        // Reset the select menu on the message to clear the user's selection
+        // Reset the select menu
         await interaction.message.edit({ components: interaction.message.components });
-        console.log('[Ticket Select] Modal shown.');
+        console.log('[Ticket Select] Modal Page 0 shown.');
+
+        /*
+        if (parsedQs.length > 5) {
+          // Legacy Interview Mode Code Removed
+        }
+        */
+        return;
+
+        /* Legacy Single Page Modal Logic Removed (Combined above) */
       } catch (err) {
         console.error('[Ticket Select] Error opening form:', err);
-        if (!interaction.replied && !interaction.deferred) {
-          interaction.reply({ content: 'Error opening form (Check console).', ephemeral: true });
-        }
       }
     } else if (interaction.customId.startsWith('wizard_delete_q_select_')) {
       const catId = interaction.customId.split('_')[4];
@@ -1940,6 +1977,9 @@ client.on('interactionCreate', async interaction => {
         }
       } catch (e) { questions = []; }
 
+      // Normalize
+      questions = questions.map(q => (typeof q === 'string' ? { text: q, type: 'text' } : q));
+
       if (indexToDelete >= 0 && indexToDelete < questions.length) {
         questions.splice(indexToDelete, 1);
         await safeQuery('UPDATE ticket_categories SET form_questions = $1 WHERE id = $2', [JSON.stringify(questions), catId]);
@@ -1947,7 +1987,12 @@ client.on('interactionCreate', async interaction => {
 
       const embed = new EmbedBuilder()
         .setTitle(rows[0].name ? `Edit Questions: ${rows[0].name}` : 'Edit Questions')
-        .setDescription(`Current Questions:\n${questions.map((q, i) => `${i + 1}. ${q}`).join('\n') || 'None'}`)
+        .setDescription(`Current Questions:\n${questions.map((q, i) => {
+          let typeLabel = '[Text]';
+          if (q.type === 'file') typeLabel = '[File]';
+          if (q.type === 'dropdown') typeLabel = '[Dropdown]';
+          return `${i + 1}. ${typeLabel} ${q.text}`;
+        }).join('\n') || 'None'}`)
         .setColor('Purple');
 
       const row = new ActionRowBuilder().addComponents(
@@ -2001,56 +2046,259 @@ client.on('interactionCreate', async interaction => {
         console.error(err);
         await interaction.reply({ content: '❌ Error creating category. Check role ID.', ephemeral: true });
       }
-    } else if (interaction.customId.startsWith('modal_wizard_single_q_')) {
-      const catId = interaction.customId.split('_')[4];
-      console.log('[Wizard Debug] Modal Submit for Add Question. CatID:', catId);
-      const question = interaction.fields.getTextInputValue('question');
+    } else if (interaction.customId.startsWith('modal_wizard_add_q_')) {
+      // CustomID: modal_wizard_add_q_TYPE_CATID
+      // TYPE could be 'text', 'file', 'dropdown'
+      const parts = interaction.customId.split('_');
+      const type = parts[4];
+      const catId = parts[5];
+
+      const questionText = interaction.fields.getTextInputValue('question_text');
+      let questionObj = { text: questionText, type: type };
+
+      if (type === 'dropdown') {
+        const optionsRaw = interaction.fields.getTextInputValue('dropdown_options');
+        const options = optionsRaw.split(',').map(o => o.trim()).filter(o => o.length > 0);
+        if (options.length === 0) {
+          return interaction.reply({ content: '❌ You must provide at least one option for the dropdown.', ephemeral: true });
+        }
+        if (options.length > 25) {
+          return interaction.reply({ content: '❌ Maximum 25 options allowed.', ephemeral: true });
+        }
+        questionObj.options = options;
+      }
 
       // Fetch existing questions
       const { rows } = await db.query('SELECT form_questions, name, emoji, staff_role_id FROM ticket_categories WHERE id = $1', [catId]);
       if (rows.length === 0) return interaction.reply({ content: 'Category not found.', ephemeral: true });
 
       let questions = rows[0].form_questions || [];
-      // Ensure questions is an array
       if (typeof questions === 'string') {
         try { questions = JSON.parse(questions); } catch (e) { questions = []; }
       }
       if (!Array.isArray(questions)) questions = [];
 
-      questions.push(question);
+      // Migrate existing string-only questions to objects if necessary
+      questions = questions.map(q => {
+        if (typeof q === 'string') return { text: q, type: 'text' };
+        return q;
+      });
+
+      questions.push(questionObj);
 
       await db.query('UPDATE ticket_categories SET form_questions = $1 WHERE id = $2', [JSON.stringify(questions), catId]);
 
       // Update the embed in the thread
       const embed = new EmbedBuilder()
         .setTitle('Ticket Creation Zone')
-        .setDescription(`**Category:** ${rows[0].emoji} ${rows[0].name}\n**Role:** <@&${rows[0].staff_role_id}>\n\n**Questions:**\n${questions.map((q, i) => `${i + 1}. ${q}`).join('\n')}`)
+        .setDescription(`**Category:** ${rows[0].emoji} ${rows[0].name}\n**Role:** <@&${rows[0].staff_role_id}>\n\n**Questions:**\n${questions.map((q, i) => {
+          let typeLabel = '[Text]';
+          if (q.type === 'file') typeLabel = '[File]';
+          if (q.type === 'dropdown') typeLabel = '[Dropdown]';
+          return `${i + 1}. ${typeLabel} ${q.text}`;
+        }).join('\n')}`)
         .setColor('Green');
 
       const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(`wizard_add_single_q_${catId}`).setLabel('Add Question').setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId(`wizard_delete_q_menu_${catId}`).setLabel('Delete Question').setStyle(ButtonStyle.Danger),
+        new ButtonBuilder().setCustomId(`wizard_clear_q_${catId}`).setLabel('Clear All').setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId(`wizard_finish_${catId}`).setLabel('Finish Setup').setStyle(ButtonStyle.Success)
       );
 
-      // Update the message that spawned the modal (the embed with buttons)
-      await interaction.update({ embeds: [embed], components: [row] });
+      // Find the message to update? 
+      // This is a modal submission, so we can't easily look up "the message".
+      // But we can reply or try to edit a message if we had context. 
+      // The wizard flow is usually: Button -> Modal -> Update Button Message
+      // BUT `interaction.update` only works if the interaction was a Component. This is a Modal Submit.
+      // So we have to `.reply` to confirm, OR we can try to fetch the Wizard Panel if it's the last message in channel?
+      // Since `wizard-wizard` runs in a dedicated ephemeral thread or ephemeral logic... wait.
+      // The original `wizard` command doesn't create a thread, it sends a message.
+      // Actually, looking at the code: `wizard_finish` deletes the channel? No, `interaction.channel.delete()`?
+      // It seems the wizard creates a temporary channel or thread?
+      // Ah, `wizard-wizard` creates a "config thread" per comment in deploy-commands.
 
-    } else if (interaction.customId.startsWith('modal_ticket_create_')) {
-      const catId = interaction.customId.split('_')[3];
+      // Let's assume we are in the config channel/thread.
+      // We should ideally send the updated Embed as a new message or attempt to find the last one.
+      // Simplest: Send new Embed state.
 
-      // Fetch category to get question texts corresponding to answers
-      const { rows } = await db.query('SELECT * FROM ticket_categories WHERE id = $1', [catId]);
-      if (rows.length === 0) return interaction.reply({ content: 'Category not found.', ephemeral: true });
-      const category = rows[0];
-      const formQuestions = category.form_questions || [];
+      await interaction.reply({ embeds: [embed], components: [row] });
 
-      const answers = [];
-      formQuestions.slice(0, 5).forEach((q, index) => {
-        const answer = interaction.fields.getTextInputValue(`q_${index}`);
-        answers.push({ question: q, answer: answer });
+    } else if (interaction.customId.startsWith('modal_wizard_single_q_')) {
+      /* Legacy Handler - Leaving stub or removing? Removing to avoid confusion */
+      /* Merged into modal_wizard_add_q_ logic above */
+      const catId = interaction.customId.split('_')[4];
+      /* ... Just redirect/error ... */
+      await interaction.reply({ content: '❌ Legacy interface used. Please restart wizard.', ephemeral: true });
+
+    } else if (interaction.customId.startsWith('modal_ticket_create_') || interaction.customId.startsWith('modal_ticket_submit_')) {
+      const parts = interaction.customId.split('_');
+      // format: modal_ticket_submit_CATID_PAGE or modal_ticket_create_CATID (legacy)
+
+      let catId, page;
+      if (interaction.customId.startsWith('modal_ticket_submit_')) {
+        catId = parts[3];
+        page = parseInt(parts[4]);
+      } else {
+        // Handle legacy or simple single page
+        catId = parts[3];
+        page = 0;
+      }
+
+      if (parsedQs.length === 0) parsedQs = [{ text: 'Please describe your request:', type: 'text' }];
+
+      console.log(`[Ticket Select] Questions to ask: ${parsedQs.length}`);
+
+      // Check for complex questions
+      const hasComplex = parsedQs.some(q => q.type && q.type !== 'text');
+
+      if (hasComplex) {
+        // Interactive Thread Mode
+        await interaction.deferReply({ ephemeral: true });
+
+        const guild = interaction.guild;
+        const safeName = interaction.user.username.replace(/[^a-zA-Z0-9-]/g, '');
+        const channelName = `ticket-${safeName}-${category.name}`.substring(0, 32);
+
+        try {
+          const ticketThread = await interaction.channel.threads.create({
+            name: channelName,
+            type: ChannelType.PrivateThread,
+            reason: `Ticket created by ${interaction.user.tag}`,
+            autoArchiveDuration: 1440
+          });
+          await ticketThread.members.add(interaction.user.id);
+
+          await safeQuery(
+            'INSERT INTO tickets (channel_id, guild_id, user_id, category_id, pending_questions, current_question_index, answers) VALUES ($1, $2, $3, $4, $5, 0, $6)',
+            [ticketThread.id, guild.id, interaction.user.id, category.id, JSON.stringify(parsedQs), JSON.stringify([])]
+          );
+
+          const welcomeEmbed = new EmbedBuilder()
+            .setTitle(`${category.emoji} ${category.name} Ticket`)
+            .setDescription(`Welcome <@${interaction.user.id}>!\n\nThis application has **${parsedQs.length}** questions.\nPlease answer them one by one below.`)
+            .setColor('Green');
+
+          await ticketThread.send({ embeds: [welcomeEmbed] });
+
+          // Send First Question
+          const firstQ = parsedQs[0];
+          const qText = firstQ.text || firstQ;
+          const qType = firstQ.type || 'text';
+
+          const qEmbed = new EmbedBuilder()
+            .setTitle(`Question 1/${parsedQs.length}`)
+            .setDescription(qText)
+            .setColor('Blue');
+
+          const components = [];
+          if (qType === 'dropdown' && firstQ.options) {
+            const select = new StringSelectMenuBuilder()
+              .setCustomId('ticket_interview_dropdown')
+              .setPlaceholder('Select an option...')
+              .addOptions(firstQ.options.map(opt => ({ label: opt, value: opt })));
+            components.push(new ActionRowBuilder().addComponents(select));
+          } else if (qType === 'file') {
+            qEmbed.setFooter({ text: 'Please upload a file/image as your answer.' });
+          }
+
+          await ticketThread.send({ embeds: [qEmbed], components: components });
+          await interaction.editReply({ content: `✅ Ticket created: <#${ticketThread.id}>` });
+          await interaction.message.edit({ components: interaction.message.components }); // reset menu
+        } catch (err) {
+          console.error('Error creating interview thread:', err);
+          await interaction.editReply({ content: '❌ Failed to create ticket thread.' });
+        }
+        return;
+      }
+
+      // Initialize session (Simple Text Modals)
+      const totalPages = Math.ceil(parsedQs.length / 5);
+      ticketCreationSessions.set(interaction.user.id, {
+        catId: catId,
+        questions: parsedQs,
+        answers: [],
+        totalPages: totalPages
       });
 
-      // NOW create the thread with answers
+      // Show first modal (Page 0)
+      const modal = new ModalBuilder()
+        .setCustomId(`modal_ticket_submit_${catId}_0`)
+        .setTitle(`Open Ticket: ${category.name.substring(0, 45)}`);
+
+      parsedQs.slice(0, 5).forEach((q, i) => {
+        const label = q.text || q;
+        modal.addComponents(new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId(`q_${i}`)
+            .setLabel(label.length > 45 ? label.substring(0, 42) + '...' : label)
+            .setPlaceholder(label.substring(0, 100))
+            .setStyle(TextInputStyle.Paragraph)
+            .setRequired(true)
+        ));
+      });
+
+      await interaction.showModal(modal);
+      // Reset the select menu
+      await interaction.message.edit({ components: interaction.message.components });
+      console.log('[Ticket Select] Modal Page 0 shown.');
+
+      if (!session) {
+        return interaction.reply({ content: '❌ Session expired. Please try again.', ephemeral: true });
+      }
+
+      // Extract answers from this page
+      // Inputs are named q_0, q_1... relative to the slice
+      // But wait... for page 0, indices are 0-4. For page 1, indices are 5-9?
+      // No, usually in modal I'll name them q_0 ... q_4 relative to the modal. 
+      // Let's check how I created them: 
+      // .setCustomId(`q_${i}`) where i is the actual index in the big array.
+
+      const startIdx = page * 5;
+      const endIdx = Math.min((page + 1) * 5, session.questions.length);
+
+      for (let i = startIdx; i < endIdx; i++) {
+        const answer = interaction.fields.getTextInputValue(`q_${i}`);
+        // Store answer
+        session.answers[i] = { question: session.questions[i].text, answer: answer }; // Store question.text for consistency
+      }
+
+      // Check for next page
+      const nextPage = page + 1;
+      if (nextPage < session.totalPages) {
+        // Show Next Modal
+        const modal = new ModalBuilder()
+          .setCustomId(`modal_ticket_submit_${catId}_${nextPage}`)
+          .setTitle(`Page ${nextPage + 1}/${session.totalPages}`);
+
+        const qStart = nextPage * 5;
+        const qEnd = Math.min((nextPage + 1) * 5, session.questions.length);
+
+        session.questions.slice(qStart, qEnd).forEach((q, i) => {
+          // i is relative to slice 0..4
+          // but we want unique customId for the field? 
+          // Actually, standard practice across modals is fine to reuse IDs if different modal, 
+          // BUT I used `q_${actualIndex}` in generation.
+          const actualIndex = qStart + i;
+          modal.addComponents(new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId(`q_${actualIndex}`)
+              .setLabel(q.text.length > 45 ? q.text.substring(0, 42) + '...' : q.text)
+              .setPlaceholder(q.text.substring(0, 100))
+              .setStyle(TextInputStyle.Paragraph)
+              .setRequired(true)
+          ));
+        });
+
+        await interaction.showModal(modal);
+        return; // Done for this specific interaction
+      }
+
+      // If no more pages, CREATE TICKET
+      // Fetch category info again for role/emoji
+      const { rows } = await db.query('SELECT * FROM ticket_categories WHERE id = $1', [catId]);
+      const category = rows[0];
+
       const guild = interaction.guild;
       const channelName = `ticket-${interaction.user.username}-${category.name}`;
 
@@ -2068,24 +2316,38 @@ client.on('interactionCreate', async interaction => {
           [ticketThread.id, guild.id, interaction.user.id, category.id]
         );
 
-        const answerFields = answers.map(a => `**${a.question}**\n${a.answer}`).join('\n\n');
+        const answerFields = session.answers.map(a => `**${a.question}**\n${a.answer}`).join('\n\n');
 
         const welcomeEmbed = new EmbedBuilder()
           .setTitle(`${category.emoji} ${category.name} Ticket`)
           .setDescription(`Welcome <@${interaction.user.id}>!\n\n${answerFields}\n\n<@&${category.staff_role_id}> will be with you shortly.`)
           .setColor('Green');
 
-        const closeButton = new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId('close_ticket_btn').setLabel('Close Ticket').setStyle(ButtonStyle.Danger).setEmoji('🔒')
-        );
+        const closeButtons = new ActionRowBuilder()
+          .addComponents(
+            new ButtonBuilder()
+              .setCustomId('close_ticket_btn')
+              .setLabel('Close Ticket')
+              .setStyle(ButtonStyle.Danger)
+              .setEmoji('🔒'),
+            new ButtonBuilder()
+              .setCustomId('close_ticket_reason_btn')
+              .setLabel('Close with Reason')
+              .setStyle(ButtonStyle.Secondary)
+              .setEmoji('📝')
+          );
 
-        await ticketThread.send({ embeds: [welcomeEmbed], components: [closeButton] });
+        await ticketThread.send({ embeds: [welcomeEmbed], components: [closeButtons] });
         await interaction.reply({ content: `✅ Ticket created: <#${ticketThread.id}>`, ephemeral: true });
+
+        // Cleanup Session
+        ticketCreationSessions.delete(interaction.user.id);
 
       } catch (err) {
         console.error(err);
         await interaction.reply({ content: '❌ Failed to create ticket.', ephemeral: true });
       }
+
 
     } else if (interaction.customId.startsWith('buy_modal_')) {
       const resource = interaction.customId.split('_')[2];
@@ -2225,6 +2487,64 @@ client.on('interactionCreate', async interaction => {
       }, duration);
 
       logActivity('🎁 Giveaway Created', `<@${interaction.user.id}> created a giveaway: **${totalPrize.toLocaleString('en-US')} 💰** total prize (${entryCost.toLocaleString('en-US')} 💰 entry, ${winnerCount} winner(s))`, 'Gold');
+    } else if (interaction.customId === 'modal_close_ticket_reason') {
+      const reason = interaction.fields.getTextInputValue('close_reason');
+      await interaction.reply({ content: `🔒 Closing ticket. Reason: ${reason}` });
+
+      const { rows } = await safeQuery('SELECT * FROM tickets WHERE channel_id = $1', [interaction.channelId]);
+      const ticket = rows[0];
+      const ticketOwner = ticket ? ticket.user_id : 'Unknown';
+
+      // Update DB
+      await db.query('UPDATE tickets SET closed = TRUE WHERE channel_id = $1', [interaction.channelId]);
+
+      // Log the closure
+      logActivity(
+        '🔒 Ticket Closed',
+        `**Ticket:** ${interaction.channel.name}\n**Closed by:** <@${interaction.user.id}>\n**Owner:** <@${ticketOwner}>\n**Reason:** ${reason}`,
+        'Red'
+      );
+
+      // Create Transcript
+      try {
+        let transcriptText = `TRANSCRIPT FOR TICKET: ${interaction.channel.name} (${interaction.channelId})\n`;
+        transcriptText += `USER: ${ticketOwner}\n`;
+        transcriptText += `CLOSED BY: ${interaction.user.tag} (${interaction.user.id})\n`;
+        transcriptText += `REASON: ${reason}\n`;
+        transcriptText += `DATE: ${new Date().toISOString()}\n`;
+        transcriptText += `--------------------------------------------------\n\n`;
+
+        if (ticket.pending_questions && ticket.answers) {
+          // Interview Mode
+          const answers = typeof ticket.answers === 'string' ? JSON.parse(ticket.answers) : ticket.answers;
+          answers.forEach((a, i) => {
+            transcriptText += `Q${i + 1}: ${a.question}\nA: ${a.answer}\n\n`;
+          });
+        }
+
+        // Fetch last 100 messages for context if needed (optional simple text dump)
+        const messages = await interaction.channel.messages.fetch({ limit: 100 });
+        messages.reverse().forEach(m => {
+          transcriptText += `[${m.createdAt.toISOString()}] ${m.author.tag}: ${m.content} ${m.attachments.size > 0 ? '[Attachment]' : ''}\n`;
+        });
+
+        // Save to Backup Table
+        await db.query(
+          'INSERT INTO ticket_transcripts (channel_id, guild_id, user_id, transcript, reason, closed_by, closed_at) VALUES ($1, $2, $3, $4, $5, $6, NOW())',
+          [interaction.channelId, interaction.guildId, ticketOwner, transcriptText, reason, interaction.user.id]
+        );
+      } catch (err) {
+        console.error('Error creating transcript:', err);
+      }
+
+      // Delete thread after 5 seconds
+      setTimeout(async () => {
+        try {
+          await interaction.channel.delete();
+        } catch (err) {
+          console.error('Failed to delete ticket thread:', err);
+        }
+      }, 5000);
     }
   } else if (interaction.isButton()) { // Handle Button Clicks
     if (interaction.customId === 'wizard_create_cat_btn') {
@@ -2238,19 +2558,65 @@ client.on('interactionCreate', async interaction => {
       return;
     } else if (interaction.customId.startsWith('wizard_add_single_q_')) {
       const catId = interaction.customId.split('_')[4];
-      console.log('[Wizard Debug] Button Add Question. CustomID:', interaction.customId, 'CatID:', catId);
-      const modal = new ModalBuilder().setCustomId(`modal_wizard_single_q_${catId}`).setTitle('Add Question');
 
-      modal.addComponents(new ActionRowBuilder().addComponents(
-        new TextInputBuilder()
-          .setCustomId('question')
-          .setLabel('Question Text')
-          .setStyle(TextInputStyle.Short)
-          .setRequired(true)
-      ));
+      const row = new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder()
+          .setCustomId(`wizard_q_type_select_${catId}`)
+          .setPlaceholder('Select Question Type')
+          .addOptions(
+            { label: 'Text Input', value: 'text', description: 'Standard text answer', emoji: '📝' },
+            { label: 'Dropdown Selection', value: 'dropdown', description: 'User selects from a list', emoji: '🔽' },
+            { label: 'File Upload', value: 'file', description: 'User uploads an image/file', emoji: '📎' }
+          )
+      );
 
-      await interaction.showModal(modal);
+      await interaction.reply({ content: 'Choose the type of answer for this question:', components: [row], ephemeral: true });
       return;
+
+    } else if (interaction.customId.startsWith('wizard_q_type_select_')) {
+      const catId = interaction.customId.split('_')[4];
+      const type = interaction.values[0];
+
+      if (type === 'text' || type === 'file') {
+        const modal = new ModalBuilder()
+          .setCustomId(`modal_wizard_add_q_${type}_${catId}`)
+          .setTitle(`Add ${type === 'text' ? 'Text' : 'File'} Question`);
+
+        modal.addComponents(new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId('question_text')
+            .setLabel('Question Text')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+        ));
+
+        await interaction.showModal(modal);
+      } else if (type === 'dropdown') {
+        const modal = new ModalBuilder()
+          .setCustomId(`modal_wizard_add_q_${type}_${catId}`)
+          .setTitle('Add Dropdown Question');
+
+        modal.addComponents(
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('question_text')
+              .setLabel('Question Text')
+              .setStyle(TextInputStyle.Short)
+              .setRequired(true)
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('dropdown_options')
+              .setLabel('Options (comma separated)')
+              .setPlaceholder('Option 1, Option 2, Option 3')
+              .setStyle(TextInputStyle.Paragraph)
+              .setRequired(true)
+          )
+        );
+        await interaction.showModal(modal);
+      }
+      // Clean up the selection message
+      try { await interaction.message.delete(); } catch (e) { }
     } else if (interaction.customId.startsWith('wizard_finish_')) {
       await interaction.reply({ content: '✅ Setup finished! The category has been configured.', ephemeral: true });
       try { await interaction.channel.delete(); } catch (e) { }
@@ -2272,13 +2638,16 @@ client.on('interactionCreate', async interaction => {
 
       if (questions.length === 0) return interaction.reply({ content: 'No questions to delete.', ephemeral: true });
 
+      // Normalize strings to objects
+      questions = questions.map(q => (typeof q === 'string' ? { text: q, type: 'text' } : q));
+
       const select = new StringSelectMenuBuilder()
         .setCustomId(`wizard_delete_q_select_${catId}`)
         .setPlaceholder('Select a question to delete')
         .addOptions(questions.map((q, i) => ({
-          label: q.length > 50 ? q.substring(0, 47) + '...' : q,
+          label: q.text.length > 50 ? q.text.substring(0, 47) + '...' : q.text,
           value: i.toString(),
-          description: `Question #${i + 1}`
+          description: `Question #${i + 1} (${q.type || 'text'})`
         })));
 
       const row = new ActionRowBuilder().addComponents(select);
@@ -2303,13 +2672,54 @@ client.on('interactionCreate', async interaction => {
       const embed = EmbedBuilder.from(interaction.message.embeds[0]);
       embed.setDescription('Current Questions:\nNone');
       await interaction.update({ embeds: [embed] });
-    }
-
-    if (interaction.customId === 'close_ticket_btn') {
+    } else if (interaction.customId === 'close_ticket_btn') {
       await interaction.reply({ content: '🔒 Closing ticket...' });
+
+      const { rows } = await safeQuery('SELECT * FROM tickets WHERE channel_id = $1', [interaction.channelId]);
+      const ticket = rows[0];
+      const ticketOwner = ticket ? ticket.user_id : 'Unknown';
 
       // Update DB
       await db.query('UPDATE tickets SET closed = TRUE WHERE channel_id = $1', [interaction.channelId]);
+
+      // Log the closure
+      logActivity(
+        '🔒 Ticket Closed',
+        `**Ticket:** ${interaction.channel.name}\n**Closed by:** <@${interaction.user.id}>\n**Owner:** <@${ticketOwner}>\n**Reason:** No reason provided.`,
+        'Red'
+      );
+
+      // Create Transcript
+      try {
+        let transcriptText = `TRANSCRIPT FOR TICKET: ${interaction.channel.name} (${interaction.channelId})\n`;
+        transcriptText += `USER: ${ticketOwner}\n`;
+        transcriptText += `CLOSED BY: ${interaction.user.tag} (${interaction.user.id})\n`;
+        transcriptText += `REASON: No reason provided.\n`;
+        transcriptText += `DATE: ${new Date().toISOString()}\n`;
+        transcriptText += `--------------------------------------------------\n\n`;
+
+        if (ticket.pending_questions && ticket.answers) {
+          // Interview Mode
+          const answers = typeof ticket.answers === 'string' ? JSON.parse(ticket.answers) : ticket.answers;
+          answers.forEach((a, i) => {
+            transcriptText += `Q${i + 1}: ${a.question}\nA: ${a.answer}\n\n`;
+          });
+        }
+
+        // Fetch last 100 messages for context if needed (optional simple text dump)
+        const messages = await interaction.channel.messages.fetch({ limit: 100 });
+        messages.reverse().forEach(m => {
+          transcriptText += `[${m.createdAt.toISOString()}] ${m.author.tag}: ${m.content} ${m.attachments.size > 0 ? '[Attachment]' : ''}\n`;
+        });
+
+        // Save to Backup Table
+        await db.query(
+          'INSERT INTO ticket_transcripts (channel_id, guild_id, user_id, transcript, reason, closed_by, closed_at) VALUES ($1, $2, $3, $4, $5, $6, NOW())',
+          [interaction.channelId, interaction.guildId, ticketOwner, transcriptText, 'No reason provided.', interaction.user.id]
+        );
+      } catch (err) {
+        console.error('Error creating transcript:', err);
+      }
 
       // Delete thread after 5 seconds
       setTimeout(async () => {

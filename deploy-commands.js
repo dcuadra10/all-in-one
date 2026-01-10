@@ -17,7 +17,19 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName('daily')
-    .setDescription('Claim your daily Sovereign Pounds reward!'),
+    .setDescription('Daily rewards and stats')
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('claim')
+        .setDescription('Claim your daily Sovereign Pounds reward!'))
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('stats')
+        .setDescription('Check your daily message stats (since 00:00 UTC)')
+        .addUserOption(option =>
+          option.setName('user')
+            .setDescription('Check stats for another user')
+            .setRequired(false))),
 
   new SlashCommandBuilder()
     .setName('stats')
@@ -294,6 +306,15 @@ const ticketCommands = [
       option.setName('user')
         .setDescription('User to remove')
         .setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName('ticket-backup')
+    .setDescription('Admin: Get the transcript of a closed ticket')
+    .addStringOption(option =>
+      option.setName('ticket_id')
+        .setDescription('Channel ID of the ticket')
+        .setRequired(true)
+        .setAutocomplete(true)),
 ];
 
 commands.push(...ticketCommands.map(command => command.toJSON()));
