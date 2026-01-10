@@ -1997,12 +1997,54 @@ client.on('interactionCreate', async interaction => {
 
       const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(`wizard_add_single_q_${catId}`).setLabel('Add Question').setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId(`wizard_edit_q_menu_${catId}`).setLabel('Edit Question').setStyle(ButtonStyle.Primary),
         new ButtonBuilder().setCustomId(`wizard_delete_q_menu_${catId}`).setLabel('Delete Question').setStyle(ButtonStyle.Danger),
         new ButtonBuilder().setCustomId(`wizard_clear_q_${catId}`).setLabel('Clear All').setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId(`wizard_finish_${catId}`).setLabel('Finish').setStyle(ButtonStyle.Success)
       );
 
       await interaction.update({ embeds: [embed], components: [row] });
+    } else if (interaction.customId.startsWith('wizard_edit_q_select_')) {
+      const catId = interaction.customId.split('_')[4];
+      const index = parseInt(interaction.values[0]);
+
+      const { rows } = await safeQuery('SELECT form_questions FROM ticket_categories WHERE id = $1', [catId]);
+      if (rows.length === 0) return interaction.reply({ content: 'Category not found.', ephemeral: true });
+
+      let questions = JSON.parse(rows[0].form_questions || '[]');
+      // Normalize
+      questions = questions.map(q => (typeof q === 'string' ? { text: q, type: 'text' } : q));
+
+      const question = questions[index];
+      if (!question) return interaction.reply({ content: 'Question not found.', ephemeral: true });
+
+      const type = question.type || 'text';
+
+      // Show Edit Modal
+      let modal;
+      if (type === 'dropdown') {
+        modal = new ModalBuilder().setCustomId(`modal_wizard_edit_q_${type}_${catId}_${index}`).setTitle('Edit Dropdown Question');
+        modal.addComponents(
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder().setCustomId('question_text').setLabel('Question Text').setStyle(TextInputStyle.Short).setValue(question.text).setRequired(true)
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder().setCustomId('dropdown_options').setLabel('Options (comma separated)').setStyle(TextInputStyle.Paragraph).setValue(question.options ? question.options.join(', ') : '').setRequired(true)
+          )
+        );
+      } else {
+        modal = new ModalBuilder().setCustomId(`modal_wizard_edit_q_${type}_${catId}_${index}`).setTitle(`Edit ${type === 'file' ? 'File' : 'Text'} Question`);
+        modal.addComponents(
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder().setCustomId('question_text').setLabel('Question Text').setStyle(TextInputStyle.Short).setValue(question.text).setRequired(true)
+          )
+        );
+      }
+
+      await interaction.showModal(modal);
+      // Delete the selection menu message
+      try { await interaction.message.delete(); } catch (e) { }
+
     } else if (interaction.customId.startsWith('wizard_q_type_select_')) {
       const catId = interaction.customId.split('_')[4];
       const type = interaction.values[0];
@@ -2081,6 +2123,7 @@ client.on('interactionCreate', async interaction => {
 
         const row = new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId(`wizard_add_single_q_${newCatId}`).setLabel('Add Question').setStyle(ButtonStyle.Primary),
+          new ButtonBuilder().setCustomId(`wizard_edit_q_menu_${newCatId}`).setLabel('Edit Question').setStyle(ButtonStyle.Primary),
           new ButtonBuilder().setCustomId(`wizard_finish_${newCatId}`).setLabel('Finish Setup').setStyle(ButtonStyle.Success)
         );
 
@@ -2145,6 +2188,7 @@ client.on('interactionCreate', async interaction => {
 
       const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(`wizard_add_single_q_${catId}`).setLabel('Add Question').setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId(`wizard_edit_q_menu_${catId}`).setLabel('Edit Question').setStyle(ButtonStyle.Primary),
         new ButtonBuilder().setCustomId(`wizard_delete_q_menu_${catId}`).setLabel('Delete Question').setStyle(ButtonStyle.Danger),
         new ButtonBuilder().setCustomId(`wizard_clear_q_${catId}`).setLabel('Clear All').setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId(`wizard_finish_${catId}`).setLabel('Finish Setup').setStyle(ButtonStyle.Success)
@@ -2174,6 +2218,63 @@ client.on('interactionCreate', async interaction => {
       const catId = interaction.customId.split('_')[4];
       /* ... Just redirect/error ... */
       await interaction.reply({ content: '❌ Legacy interface used. Please restart wizard.', ephemeral: true });
+
+    } else if (interaction.customId.startsWith('modal_wizard_edit_q_')) {
+      // modal_wizard_edit_q_TYPE_CATID_INDEX
+      const parts = interaction.customId.split('_');
+      const type = parts[4];
+      const catId = parts[5];
+      const index = parseInt(parts[6]);
+
+      const questionText = interaction.fields.getTextInputValue('question_text');
+
+      const { rows } = await db.query('SELECT form_questions, name, emoji, staff_role_id FROM ticket_categories WHERE id = $1', [catId]);
+      if (rows.length === 0) return interaction.reply({ content: 'Category not found.', ephemeral: true });
+
+      let questions = [];
+      try { questions = JSON.parse(rows[0].form_questions || '[]'); } catch (e) { }
+
+      // Normalize
+      questions = questions.map(q => (typeof q === 'string' ? { text: q, type: 'text' } : q));
+
+      if (index < 0 || index >= questions.length) {
+        return interaction.reply({ content: 'Question not found.', ephemeral: true });
+      }
+
+      // Update Question
+      questions[index].text = questionText;
+      questions[index].type = type; // Usually type doesnt change in this simple edit flow, but we pass it.
+
+      if (type === 'dropdown') {
+        const optionsRaw = interaction.fields.getTextInputValue('dropdown_options');
+        const options = optionsRaw.split(',').map(o => o.trim()).filter(o => o.length > 0);
+        if (options.length === 0) return interaction.reply({ content: '❌ Dropdown must have options.', ephemeral: true });
+        if (options.length > 25) return interaction.reply({ content: '❌ Max 25 options.', ephemeral: true });
+        questions[index].options = options;
+      }
+
+      await db.query('UPDATE ticket_categories SET form_questions = $1 WHERE id = $2', [JSON.stringify(questions), catId]);
+
+      // Refresh Embed
+      const embed = new EmbedBuilder()
+        .setTitle('Ticket Creation Zone')
+        .setDescription(`**Category:** ${rows[0].emoji} ${rows[0].name}\n**Role:** <@&${rows[0].staff_role_id}>\n\n**Questions:**\n${questions.map((q, i) => {
+          let typeLabel = '[Text]';
+          if (q.type === 'file') typeLabel = '[File]';
+          if (q.type === 'dropdown') typeLabel = '[Dropdown]';
+          return `${i + 1}. ${typeLabel} ${q.text}`;
+        }).join('\n')}`)
+        .setColor('Green');
+
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`wizard_add_single_q_${catId}`).setLabel('Add Question').setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId(`wizard_edit_q_menu_${catId}`).setLabel('Edit Question').setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId(`wizard_delete_q_menu_${catId}`).setLabel('Delete Question').setStyle(ButtonStyle.Danger),
+        new ButtonBuilder().setCustomId(`wizard_clear_q_${catId}`).setLabel('Clear All').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId(`wizard_finish_${catId}`).setLabel('Finish Setup').setStyle(ButtonStyle.Success)
+      );
+
+      await interaction.reply({ embeds: [embed], components: [row] });
 
     } else if (interaction.customId.startsWith('modal_ticket_create_') || interaction.customId.startsWith('modal_ticket_submit_')) {
       const parts = interaction.customId.split('_');
@@ -2617,6 +2718,32 @@ client.on('interactionCreate', async interaction => {
       await interaction.reply({ content: 'Choose the type of answer for this question:', components: [row], ephemeral: true });
       return;
 
+    } else if (interaction.customId.startsWith('wizard_edit_q_menu_')) {
+      const catId = interaction.customId.split('_')[4];
+      const { rows } = await db.query('SELECT form_questions FROM ticket_categories WHERE id = $1', [catId]);
+      if (rows.length === 0) return interaction.reply({ content: 'Category not found.', ephemeral: true });
+
+      let questions = JSON.parse(rows[0].form_questions || '[]');
+      questions = questions.map(q => (typeof q === 'string' ? { text: q, type: 'text' } : q));
+
+      if (questions.length === 0) return interaction.reply({ content: 'No questions to edit.', ephemeral: true });
+
+      const select = new StringSelectMenuBuilder()
+        .setCustomId(`wizard_edit_q_select_${catId}`)
+        .setPlaceholder('Select a question to edit')
+        .addOptions(questions.map((q, i) => ({
+          label: q.text.length > 50 ? q.text.substring(0, 47) + '...' : q.text,
+          value: i.toString(),
+          description: `Edit Question #${i + 1} (${q.type})`
+        })));
+
+      const row = new ActionRowBuilder().addComponents(select);
+      const cancelRow = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`wizard_cancel_delete_${catId}`).setLabel('Cancel').setStyle(ButtonStyle.Secondary)); // Reuse cancel
+
+      await interaction.reply({ content: 'Select a question to edit:', components: [row, cancelRow], ephemeral: true });
+      return;
+
+
 
     } else if (interaction.customId.startsWith('wizard_finish_')) {
       await interaction.reply({ content: '✅ Setup finished! The category has been configured.', ephemeral: true });
@@ -2660,6 +2787,7 @@ client.on('interactionCreate', async interaction => {
       const catId = interaction.customId.split('_')[3];
       const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(`wizard_add_single_q_${catId}`).setLabel('Add Question').setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId(`wizard_edit_q_menu_${catId}`).setLabel('Edit Question').setStyle(ButtonStyle.Primary),
         new ButtonBuilder().setCustomId(`wizard_delete_q_menu_${catId}`).setLabel('Delete Question').setStyle(ButtonStyle.Danger),
         new ButtonBuilder().setCustomId(`wizard_clear_q_${catId}`).setLabel('Clear All').setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId(`wizard_finish_${catId}`).setLabel('Finish').setStyle(ButtonStyle.Success)
