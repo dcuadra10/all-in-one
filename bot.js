@@ -403,13 +403,16 @@ async function seedShop() {
 client.once(Events.ClientReady, async () => {
   console.log(`Logged in as ${client.user.tag}!`);
 
-  const guild = client.guilds.cache.get(process.env.GUILD_ID);
-  if (guild) {
-    const invites = await guild.invites.fetch();
-    invites.forEach(invite => {
-      cachedInvites.set(invite.code, invite.uses);
-    });
-  }
+  client.guilds.cache.forEach(async (guild) => {
+    try {
+      const invites = await guild.invites.fetch();
+      invites.forEach(invite => {
+        cachedInvites.set(invite.code, invite.uses);
+      });
+    } catch (err) {
+      console.log(`Failed to fetch invites for guild ${guild.name}: ${err.message}`);
+    }
+  });
 
   // Seed the shop if empty
   await seedShop();
@@ -425,8 +428,8 @@ client.once(Events.ClientReady, async () => {
   }
 
   // Initial Dashboard Update
-  const guildObj = client.guilds.cache.get(process.env.GUILD_ID);
-  if (guildObj) updateTicketDashboard(guildObj);
+  // Initial Dashboard Update for all guilds that have config
+  client.guilds.cache.forEach(guild => updateTicketDashboard(guild));
 
   // QOTD Scheduler
   setInterval(async () => {
@@ -3927,67 +3930,26 @@ app.get('/api/stats', async (req, res) => {
       });
     }
 
-    const guildId = process.env.GUILD_ID;
-    if (!guildId) {
-      return res.status(500).json({ error: 'Guild ID not configured' });
-    }
+    const totalGuilds = client.guilds.cache.size;
+    const totalMembers = client.guilds.cache.reduce((acc, guild) => acc + guild.memberCount, 0);
 
-    const guild = await client.guilds.fetch(guildId);
-    if (!guild) {
-      return res.status(404).json({ error: 'Guild not found' });
-    }
-
-    let totalMembers = guild.memberCount;
-    let onlineMembers = 0;
-
-    // Default fallback note
-    let notes = `Serving ${totalMembers} members.`;
-
-    // Stats Channel IDs provided by user
-    const MEMBER_COUNT_CHANNEL_ID = '1457131100546531398';
-    const ONLINE_COUNT_CHANNEL_ID = '1457132406711779339';
-
-    // Fetch specifically these channels
-    const memberChannel = guild.channels.cache.get(MEMBER_COUNT_CHANNEL_ID);
-    const onlineChannel = guild.channels.cache.get(ONLINE_COUNT_CHANNEL_ID);
-
-    if (memberChannel) {
-      // Extract just the number
-      const match = memberChannel.name.match(/(\d+)/);
-      if (match) {
-        totalMembers = parseInt(match[1]);
-        // Update notes roughly, but keep it clean (no emojis from channel name)
-        notes = `Serving ${totalMembers} members.`;
-      }
-    }
-
-    if (onlineChannel) {
-      const match = onlineChannel.name.match(/(\d+)/);
-      if (match) {
-        onlineMembers = parseInt(match[1]);
-      }
-    } else {
-      // Fallback if specific channel not found/accessible
-      try {
-        const members = await guild.members.fetch();
-        onlineMembers = members.filter(m =>
-          !m.user.bot &&
-          ['online', 'dnd', 'idle'].includes(m.presence?.status)
-        ).size;
-      } catch (e) {
-        console.log("Failed to fetch members for presence:", e);
-        onlineMembers = 0;
-      }
-      if (onlineMembers === 0) onlineMembers = Math.floor(totalMembers * 0.3);
-    }
-
-    res.json({
-      serverName: guild.name,
-      status: "Online",
+    const stats = {
+      serverName: `${totalGuilds} Servers`,
+      status: 'Online',
       totalMembers: totalMembers,
-      onlineMembers: onlineMembers,
-      notes: notes
-    });
+      onlineMembers: 0,
+      notes: 'All Systems Operational'
+    };
+
+    if (req.query.guild_id) {
+      const guild = client.guilds.cache.get(req.query.guild_id);
+      if (guild) {
+        stats.serverName = guild.name;
+        stats.totalMembers = guild.memberCount;
+      }
+    }
+
+    res.json(stats);
 
   } catch (error) {
     console.error('API Error:', error);
