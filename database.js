@@ -410,6 +410,15 @@ async function initializeDatabase() {
       console.log('Migration note (leveling):', err.message);
     }
 
+    // General Config Migrations (Spreadsheet, Admin, Giveaway)
+    try {
+      await client.query('ALTER TABLE guild_configs ADD COLUMN IF NOT EXISTS spreadsheet_id TEXT');
+      await client.query('ALTER TABLE guild_configs ADD COLUMN IF NOT EXISTS giveaway_role_id TEXT');
+      await client.query('ALTER TABLE guild_configs ADD COLUMN IF NOT EXISTS admin_role_id TEXT');
+    } catch (err) {
+      console.log('Migration note (general config):', err.message);
+    }
+
     console.log('Database tables checked/created successfully.');
   } catch (err) {
     console.error('Error initializing database:', err);

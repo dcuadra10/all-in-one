@@ -91,12 +91,22 @@ const EXCLUDED_GIVEAWAY_ROLES = (process.env.EXCLUDED_GIVEAWAY_ROLES || 'bot,bot
 const DEFAULT_GIVEAWAY_PING_ROLE = process.env.DEFAULT_GIVEAWAY_PING_ROLE;
 
 // --- Logging Function ---
-async function logActivity(title, message, color = 'Blue', attachment = null) {
-  const logChannelId = process.env.LOG_CHANNEL_ID;
-  if (!logChannelId) return; // Do nothing if the channel ID is not set
+async function logActivity(title, message, color = 'Blue', attachment = null, guildId = null) {
+  let logChannelId = process.env.LOG_CHANNEL_ID;
+
+  if (guildId) {
+    try {
+      const { rows } = await safeQuery('SELECT log_channel_id FROM guild_configs WHERE guild_id = $1', [guildId]);
+      if (rows.length > 0 && rows[0].log_channel_id) {
+        logChannelId = rows[0].log_channel_id;
+      }
+    } catch (e) { console.error('Error fetching log channel:', e); }
+  }
+
+  if (!logChannelId) return;
 
   try {
-    const channel = await client.channels.fetch(logChannelId);
+    const channel = await client.channels.fetch(logChannelId).catch(() => null);
     if (channel && channel.isTextBased()) {
       const embed = new EmbedBuilder()
         .setTitle(title)
@@ -1602,10 +1612,9 @@ client.on('interactionCreate', async interaction => {
       }
 
     } else if (commandName === 'ticket-wizard') {
-      const adminIds = (process.env.ADMIN_IDS || '').split(',');
-      console.log(`[Wizard Debug] User: ${interaction.user.id}, Admins: ${JSON.stringify(adminIds)}`);
-
-      if (!adminIds.includes(interaction.user.id)) {
+      const { rows: configRows } = await safeQuery('SELECT admin_role_id FROM guild_configs WHERE guild_id = $1', [interaction.guildId]);
+      const adminRole = configRows[0]?.admin_role_id;
+      if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator) && !(adminRole && interaction.member.roles.cache.has(adminRole))) {
         console.log('[Wizard Debug] Permission denied.');
         return await interaction.reply({ content: '🚫 You do not have permission to use this command.', ephemeral: true });
       }
@@ -1739,8 +1748,9 @@ client.on('interactionCreate', async interaction => {
         await interaction.reply({ content: '❌ Failed to remove user from the thread.' });
       }
     } else if (commandName === 'ticket-panel-edit') {
-      const adminIds = (process.env.ADMIN_IDS || '').split(',');
-      if (!adminIds.includes(interaction.user.id)) {
+      const { rows: configRows } = await safeQuery('SELECT admin_role_id FROM guild_configs WHERE guild_id = $1', [interaction.guildId]);
+      const adminRole = configRows[0]?.admin_role_id;
+      if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator) && !(adminRole && interaction.member.roles.cache.has(adminRole))) {
         return await interaction.reply({ content: '🚫 You do not have permission to use this command.', ephemeral: true });
       }
 
@@ -1788,24 +1798,34 @@ client.on('interactionCreate', async interaction => {
           { name: '📢 Welcome Module', value: 'Customize welcome messages, images, and auto-roles.', inline: true },
           { name: '🎫 Ticket System', value: 'Manage support tickets and panels.', inline: true },
           { name: '🛡️ Logging', value: 'Set up audit logs for server events.', inline: true },
-          { name: '📈 Leveling System', value: 'Configure XP rates and level-up rewards.', inline: true }
+          { name: '📈 Leveling System', value: 'Configure XP rates and level-up rewards.', inline: true },
+          { name: '⚙️ Extras', value: 'Configure Admin Role, Google Sheets, and Giveaways.', inline: true }
         )
         .setColor('Blurple')
         .setFooter({ text: 'Sovereign Empire Bot • Setup Wizard' });
 
-      const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId('setup_welcome_btn').setLabel('Welcome Module').setStyle(ButtonStyle.Primary).setEmoji('📢'),
-        new ButtonBuilder().setCustomId('setup_tickets_btn').setLabel('Ticket System').setStyle(ButtonStyle.Primary).setEmoji('🎫'),
+      const row1 = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId('setup_welcome_btn').setLabel('Welcome').setStyle(ButtonStyle.Primary).setEmoji('📢'),
+        new ButtonBuilder().setCustomId('setup_tickets_btn').setLabel('Tickets').setStyle(ButtonStyle.Primary).setEmoji('🎫'),
         new ButtonBuilder().setCustomId('setup_logs_btn').setLabel('Logging').setStyle(ButtonStyle.Primary).setEmoji('🛡️'),
-        new ButtonBuilder().setCustomId('setup_levels_btn').setLabel('Leveling').setStyle(ButtonStyle.Success).setEmoji('📈'),
-        new ButtonBuilder().setCustomId('setup_close_btn').setLabel('Close').setStyle(ButtonStyle.Secondary).setEmoji('❌')
+        new ButtonBuilder().setCustomId('setup_levels_btn').setLabel('Leveling').setStyle(ButtonStyle.Success).setEmoji('📈')
       );
+
+      const row2 = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId('setup_admin_btn').setLabel('Admin Role').setStyle(ButtonStyle.Secondary).setEmoji('👮'),
+        new ButtonBuilder().setCustomId('setup_sheet_btn').setLabel('Google Sheet').setStyle(ButtonStyle.Secondary).setEmoji('📊'),
+        new ButtonBuilder().setCustomId('setup_giveaways_btn').setLabel('Giveaways').setStyle(ButtonStyle.Secondary).setEmoji('🎁'),
+        new ButtonBuilder().setCustomId('setup_close_btn').setLabel('Close').setStyle(ButtonStyle.Danger).setEmoji('❌')
+      );
+
+      await interaction.reply({ embeds: [embed], components: [row1, row2], ephemeral: true });
 
       await interaction.reply({ embeds: [embed], components: [row] });
     } else if (commandName === 'reset-all') {
       await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
-      const adminIds = (process.env.ADMIN_IDS || '').split(',');
-      if (!adminIds.includes(interaction.user.id)) {
+      const { rows: configRows } = await safeQuery('SELECT admin_role_id FROM guild_configs WHERE guild_id = $1', [interaction.guildId]);
+      const adminRole = configRows[0]?.admin_role_id;
+      if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator) && !(adminRole && interaction.member.roles.cache.has(adminRole))) {
         return await interaction.editReply({ content: '🚫 You do not have permission to use this command.' });
       }
 
@@ -1889,8 +1909,11 @@ client.on('interactionCreate', async interaction => {
       }
 
     } else if (commandName === 'ticket-backup') {
-      const adminIds = (process.env.ADMIN_IDS || '').split(',');
-      if (!adminIds.includes(interaction.user.id)) return interaction.reply({ content: '🚫 Admin only.', ephemeral: true });
+      const { rows: configRows } = await safeQuery('SELECT admin_role_id FROM guild_configs WHERE guild_id = $1', [interaction.guildId]);
+      const adminRole = configRows[0]?.admin_role_id;
+      if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator) && !(adminRole && interaction.member.roles.cache.has(adminRole))) {
+        return interaction.reply({ content: '🚫 Admin only.', ephemeral: true });
+      }
 
       const ticketId = interaction.options.getString('ticket_id');
       const { rows } = await safeQuery('SELECT * FROM ticket_transcripts WHERE channel_id = $1', [ticketId]);
@@ -1910,8 +1933,9 @@ client.on('interactionCreate', async interaction => {
       await interaction.reply({ embeds: [embed], files: [attachment], ephemeral: true });
 
     } else if (commandName === 'add-emoji') {
-      const adminIds = (process.env.ADMIN_IDS || '').split(',');
-      if (!adminIds.includes(interaction.user.id)) {
+      const { rows: configRows } = await safeQuery('SELECT admin_role_id FROM guild_configs WHERE guild_id = $1', [interaction.guildId]);
+      const adminRole = configRows[0]?.admin_role_id;
+      if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator) && !(adminRole && interaction.member.roles.cache.has(adminRole))) {
         return await interaction.reply({ content: '🚫 You do not have permission to use this command.', ephemeral: true });
       }
 
@@ -1931,9 +1955,10 @@ client.on('interactionCreate', async interaction => {
         await interaction.editReply({ content: `❌ Failed to create **Bot** emoji. Error: ${error.message}\n\n*Make sure the bot is owned by you or a Team and has slots available.*` });
       }
     } else if (commandName === 'giveaway') {
-      const adminIds = (process.env.ADMIN_IDS || '').split(',');
-      if (!adminIds.includes(interaction.user.id)) {
-        return interaction.reply('🚫 You do not have permission to use this command.');
+      const { rows: configRows } = await safeQuery('SELECT admin_role_id FROM guild_configs WHERE guild_id = $1', [interaction.guildId]);
+      const adminRole = configRows[0]?.admin_role_id;
+      if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator) && !(adminRole && interaction.member.roles.cache.has(adminRole))) {
+        return interaction.reply({ content: '🚫 You do not have permission to use this command.', ephemeral: true });
       }
 
       const duration = interaction.options.getString('duration');
@@ -1942,9 +1967,8 @@ client.on('interactionCreate', async interaction => {
       const entryCost = interaction.options.getNumber('entry_cost') || 10;
 
       let pingRole = interaction.options.getRole('ping_role');
-      if (!pingRole && DEFAULT_GIVEAWAY_PING_ROLE) {
-        pingRole = interaction.guild.roles.cache.get(DEFAULT_GIVEAWAY_PING_ROLE);
-      }
+
+      // Automatic fallback removed per user request
 
       const modal = new ModalBuilder()
         .setCustomId(`giveaway_modal_${Date.now()}_${pingRole ? pingRole.id : 'none'}`)
@@ -2275,6 +2299,30 @@ client.on('interactionCreate', async interaction => {
       await db.query('INSERT INTO guild_configs (guild_id) VALUES ($1) ON CONFLICT (guild_id) DO NOTHING', [interaction.guildId]);
       await db.query('UPDATE guild_configs SET level_up_channel_id = $1 WHERE guild_id = $2', [channelId, interaction.guildId]);
       await interaction.update({ content: `✅ Level Up channel set to <#${channelId}>.`, components: [] });
+
+    } else if (interaction.customId === 'select_logs_channel') {
+      const channelId = interaction.values[0];
+      await db.query('INSERT INTO guild_configs (guild_id) VALUES ($1) ON CONFLICT (guild_id) DO NOTHING', [interaction.guildId]);
+      await db.query('UPDATE guild_configs SET log_channel_id = $1 WHERE guild_id = $2', [channelId, interaction.guildId]);
+      await interaction.update({ content: `✅ Log channel set to <#${channelId}>.`, components: [] });
+
+    } else if (interaction.customId === 'select_admin_role') {
+      const roleId = interaction.values[0];
+      await db.query('INSERT INTO guild_configs (guild_id) VALUES ($1) ON CONFLICT (guild_id) DO NOTHING', [interaction.guildId]);
+      await db.query('UPDATE guild_configs SET admin_role_id = $1 WHERE guild_id = $2', [roleId, interaction.guildId]);
+      await interaction.update({ content: `✅ Admin role set to <@&${roleId}>.`, components: [] });
+
+    } else if (interaction.customId === 'modal_setup_sheet_id') {
+      const sheetId = interaction.fields.getTextInputValue('sheet_id');
+      await db.query('INSERT INTO guild_configs (guild_id) VALUES ($1) ON CONFLICT (guild_id) DO NOTHING', [interaction.guildId]);
+      await db.query('UPDATE guild_configs SET spreadsheet_id = $1 WHERE guild_id = $2', [sheetId, interaction.guildId]);
+      await interaction.update({ content: `✅ Spreadsheet ID saved. Make sure you invited the bot's email!`, components: [] });
+
+    } else if (interaction.customId === 'select_giveaway_role') {
+      const roleId = interaction.values[0];
+      await db.query('INSERT INTO guild_configs (guild_id) VALUES ($1) ON CONFLICT (guild_id) DO NOTHING', [interaction.guildId]);
+      await db.query('UPDATE guild_configs SET giveaway_role_id = $1 WHERE guild_id = $2', [roleId, interaction.guildId]);
+      await interaction.update({ content: `✅ Giveaway ping role set to <@&${roleId}>.`, components: [] });
 
     } else if (interaction.customId.startsWith('wizard_delete_q_select_')) {
       const catId = interaction.customId.split('_')[4];
@@ -2984,20 +3032,25 @@ client.on('interactionCreate', async interaction => {
 
       const row = new ActionRowBuilder().addComponents(joinButton);
 
+
+
       // Prepare content with ping if role is specified
-      const content = pingRole ? `${pingRole} **New Giveaway Available!** 🎉` : undefined;
-      const allowedMentions = pingRole ? { roles: [pingRole.id] } : undefined;
+      const roleToPing = pingRole;
+
+      const content = roleToPing ? `${roleToPing} **New Giveaway Available!** 🎉` : undefined;
+      const allowedMentions = roleToPing ? { roles: [roleToPing.id] } : undefined;
 
       // Send the giveaway message
       const giveawayMessage = await interaction.reply({
         content: content,
         embeds: [giveawayEmbed],
         components: [row],
-        allowedMentions: allowedMentions
+        allowedMentions: allowedMentions,
+        fetchReply: true
       });
 
       // Get the reply message for database storage
-      const replyMessage = await interaction.fetchReply();
+      const replyMessage = giveawayMessage; // Already fetched with fetchReply: true or explicitly fetched
 
       // Store giveaway in database
       await db.query(`
@@ -3112,14 +3165,120 @@ client.on('interactionCreate', async interaction => {
         )
         .setColor('Blurple');
 
-      const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId('setup_welcome_btn').setLabel('Welcome Module').setStyle(ButtonStyle.Primary).setEmoji('📢'),
-        new ButtonBuilder().setCustomId('setup_tickets_btn').setLabel('Ticket System').setStyle(ButtonStyle.Primary).setEmoji('🎫'),
+      const row1 = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId('setup_welcome_btn').setLabel('Welcome').setStyle(ButtonStyle.Primary).setEmoji('📢'),
+        new ButtonBuilder().setCustomId('setup_tickets_btn').setLabel('Tickets').setStyle(ButtonStyle.Primary).setEmoji('🎫'),
         new ButtonBuilder().setCustomId('setup_logs_btn').setLabel('Logging').setStyle(ButtonStyle.Primary).setEmoji('🛡️'),
-        new ButtonBuilder().setCustomId('setup_levels_btn').setLabel('Leveling').setStyle(ButtonStyle.Success).setEmoji('📈'),
-        new ButtonBuilder().setCustomId('setup_close_btn').setLabel('Close').setStyle(ButtonStyle.Secondary).setEmoji('❌')
+        new ButtonBuilder().setCustomId('setup_levels_btn').setLabel('Leveling').setStyle(ButtonStyle.Success).setEmoji('📈')
+      );
+
+      const row2 = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId('setup_admin_btn').setLabel('Admin Role').setStyle(ButtonStyle.Secondary).setEmoji('👮'),
+        new ButtonBuilder().setCustomId('setup_sheet_btn').setLabel('Google Sheet').setStyle(ButtonStyle.Secondary).setEmoji('📊'),
+        new ButtonBuilder().setCustomId('setup_giveaways_btn').setLabel('Giveaways').setStyle(ButtonStyle.Secondary).setEmoji('🎁'),
+        new ButtonBuilder().setCustomId('setup_close_btn').setLabel('Close').setStyle(ButtonStyle.Danger).setEmoji('❌')
+      );
+      await interaction.update({ embeds: [embed], components: [row1, row2] });
+
+      // --- LOGS WIZARD ---
+    } else if (interaction.customId === 'setup_logs_btn') {
+      const { rows } = await safeQuery('SELECT log_channel_id FROM guild_configs WHERE guild_id = $1', [interaction.guildId]);
+      const config = rows[0] || {};
+
+      const embed = new EmbedBuilder()
+        .setTitle('🛡️ Logging Configuration')
+        .setDescription(`Configure where the bot logs events (tickets, errors, purchases).
+            
+            **Current Channel:** ${config.log_channel_id ? `<#${config.log_channel_id}>` : 'Not Set'}`)
+        .setColor('Blue');
+
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId('setup_logs_channel_btn').setLabel('Set Channel').setStyle(ButtonStyle.Primary).setEmoji('#️⃣'),
+        new ButtonBuilder().setCustomId('setup_back_btn').setLabel('Back').setStyle(ButtonStyle.Secondary).setEmoji('⬅️')
       );
       await interaction.update({ embeds: [embed], components: [row] });
+
+    } else if (interaction.customId === 'setup_logs_channel_btn') {
+      const row = new ActionRowBuilder().addComponents(
+        new ChannelSelectMenuBuilder()
+          .setCustomId('select_logs_channel')
+          .setPlaceholder('Select Log Channel')
+          .setChannelTypes([ChannelType.GuildText])
+      );
+      await interaction.reply({ content: 'Select the channel for logs:', components: [row], ephemeral: true });
+
+      // --- ADMIN ROLE WIZARD ---
+    } else if (interaction.customId === 'setup_admin_btn') {
+      const { rows } = await safeQuery('SELECT admin_role_id FROM guild_configs WHERE guild_id = $1', [interaction.guildId]);
+      const config = rows[0] || {};
+
+      const embed = new EmbedBuilder()
+        .setTitle('👮 Admin Role Configuration')
+        .setDescription(`Set the role that has full access to bot commands and dashboards.
+            
+            **Current Role:** ${config.admin_role_id ? `<@&${config.admin_role_id}>` : 'Not Set (Using Default/Hardcoded)'}`)
+        .setColor('Grey');
+
+      const row1 = new ActionRowBuilder().addComponents(
+        new RoleSelectMenuBuilder().setCustomId('select_admin_role').setPlaceholder('Select Admin Role')
+      );
+      const row2 = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId('setup_back_btn').setLabel('Back').setStyle(ButtonStyle.Secondary).setEmoji('⬅️')
+      );
+
+      await interaction.update({ embeds: [embed], components: [row1, row2] });
+
+      // --- GOOGLE SHEET WIZARD ---
+    } else if (interaction.customId === 'setup_sheet_btn') {
+      const { rows } = await safeQuery('SELECT spreadsheet_id FROM guild_configs WHERE guild_id = $1', [interaction.guildId]);
+      const config = rows[0] || {};
+      const serviceEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || 'bot-email@example.com';
+
+      const embed = new EmbedBuilder()
+        .setTitle('📊 Google Sheet Configuration')
+        .setDescription(`Link a Google Sheet to log purchases.
+            
+            **Current Sheet ID:** ${config.spreadsheet_id || 'Not Set'}
+            
+            **Instructions:**
+            1. Create a Google Sheet.
+            2. Share it (Editor access) with: \`${serviceEmail}\`
+            3. Copy the Sheet ID from the URL (part between /d/ and /edit).
+            4. Click "Set Sheet ID" below.`)
+        .setColor('Green');
+
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId('setup_sheet_id_btn').setLabel('Set Sheet ID').setStyle(ButtonStyle.Success).setEmoji('📝'),
+        new ButtonBuilder().setCustomId('setup_back_btn').setLabel('Back').setStyle(ButtonStyle.Secondary).setEmoji('⬅️')
+      );
+      await interaction.update({ embeds: [embed], components: [row] });
+
+    } else if (interaction.customId === 'setup_sheet_id_btn') {
+      const modal = new ModalBuilder().setCustomId('modal_setup_sheet_id').setTitle('Set Google Sheet ID');
+      modal.addComponents(new ActionRowBuilder().addComponents(
+        new TextInputBuilder().setCustomId('sheet_id').setLabel('Spreadsheet ID').setStyle(TextInputStyle.Short).setPlaceholder('1BxiMVs0XRA5nFMdKb...').setRequired(true)
+      ));
+      await interaction.showModal(modal);
+
+      // --- GIVEAWAY CONFIG WIZARD ---
+    } else if (interaction.customId === 'setup_giveaways_btn') {
+      const { rows } = await safeQuery('SELECT giveaway_role_id FROM guild_configs WHERE guild_id = $1', [interaction.guildId]);
+      const config = rows[0] || {};
+
+      const embed = new EmbedBuilder()
+        .setTitle('🎁 Giveaway Configuration')
+        .setDescription(`Set the default role to ping when a giveaway starts.
+            
+            **Current Ping Role:** ${config.giveaway_role_id ? `<@&${config.giveaway_role_id}>` : 'None (Everyone/None)'}`)
+        .setColor('Purple');
+
+      const row1 = new ActionRowBuilder().addComponents(
+        new RoleSelectMenuBuilder().setCustomId('select_giveaway_role').setPlaceholder('Select Role to Ping')
+      );
+      const row2 = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId('setup_back_btn').setLabel('Back').setStyle(ButtonStyle.Secondary).setEmoji('⬅️')
+      );
+      await interaction.update({ embeds: [embed], components: [row1, row2] });
 
     } else if (interaction.customId === 'setup_levels_btn') {
       const { rows } = await safeQuery('SELECT * FROM guild_configs WHERE guild_id = $1', [interaction.guildId]);
@@ -3600,7 +3759,8 @@ client.on('interactionCreate', async interaction => {
         '🔒 Ticket Closed',
         `**Ticket:** ${interaction.channel.name}\n**Closed by:** <@${interaction.user.id}>\n**Owner:** <@${ticketOwner}>\n**Reason:** No reason provided.\n\n*Transcript attached.*`,
         'Red',
-        transcriptFile
+        transcriptFile,
+        interaction.guildId
       );
       updateTicketDashboard(interaction.guild);
 
@@ -4150,6 +4310,137 @@ async function startBot() {
     process.exit(1);
   }
 }
+
+// --- Advanced Server Logging ---
+
+client.on('messageDelete', async (message) => {
+  if (!message.guild || message.author.bot) return;
+
+  let alertText = "";
+  if (message.content.includes('discord.gg/') || message.content.includes('http')) alertText += "\n⚠️ **Alert:** Deleted message contained a link.";
+  if (message.mentions.users.size > 5) alertText += "\n🔴 **Critical:** Mass mention detected.";
+
+  logActivity(
+    '🗑️ Message Deleted',
+    `**Author:** <@${message.author.id}>\n**Channel:** <#${message.channel.id}>\n**Content:**\n${message.content.substring(0, 1000)}${alertText}`,
+    'Orange',
+    null,
+    message.guild.id
+  );
+});
+
+client.on('messageUpdate', async (oldMessage, newMessage) => {
+  if (!oldMessage.guild || oldMessage.author.bot || oldMessage.content === newMessage.content) return;
+
+  logActivity(
+    '📝 Message Edited',
+    `**Author:** <@${oldMessage.author.id}>\n**Channel:** <#${oldMessage.channel.id}>\n**Old:**\n${oldMessage.content.substring(0, 500)}\n**New:**\n${newMessage.content.substring(0, 500)}`,
+    'Yellow',
+    null,
+    oldMessage.guild.id
+  );
+});
+
+client.on('channelCreate', async (channel) => {
+  if (!channel.guild) return;
+  logActivity('📂 Channel Created', `**Name:** ${channel.name}\n**Type:** ${channel.type}\n\n*Recommendation: Check permissions for this new channel.*`, 'Green', null, channel.guild.id);
+});
+
+client.on('channelDelete', async (channel) => {
+  if (!channel.guild) return;
+  logActivity('🗑️ Channel Deleted', `**Name:** ${channel.name}\n**Type:** ${channel.type}`, 'Red', null, channel.guild.id);
+});
+
+client.on('roleCreate', async (role) => {
+  logActivity('🛡️ Role Created', `**Name:** ${role.name}\n**Color:** ${role.hexColor}\n\n*Tip: Ensure this role is below Admin roles in hierarchy.*`, 'Green', null, role.guild.id);
+});
+
+client.on('roleDelete', async (role) => {
+  logActivity('🗑️ Role Deleted', `**Name:** ${role.name}`, 'Red', null, role.guild.id);
+});
+
+client.on('roleUpdate', async (oldRole, newRole) => {
+  if (oldRole.permissions.bitfield !== newRole.permissions.bitfield) {
+    let alert = "";
+    if (newRole.permissions.has(PermissionFlagsBits.Administrator) && !oldRole.permissions.has(PermissionFlagsBits.Administrator)) {
+      alert = "\n🔴 **CRITICAL ALERT:** Administrator permission granted!";
+    }
+    if (newRole.permissions.has(PermissionFlagsBits.BanMembers) && !oldRole.permissions.has(PermissionFlagsBits.BanMembers)) {
+      alert = "\n⚠️ **Warning:** Ban Members permission granted.";
+    }
+
+    logActivity(
+      '🛡️ Role Permissions Updated',
+      `**Role:** ${newRole.name}\n**Changes:** Permissions changed.${alert}`,
+      alert.includes('CRITICAL') ? 'DarkRed' : 'Orange',
+      null,
+      newRole.guild.id
+    );
+  }
+});
+
+client.on('guildBanAdd', async (ban) => {
+  logActivity('🔨 Member Banned', `**User:** ${ban.user.tag} (${ban.user.id})`, 'Red', null, ban.guild.id);
+});
+
+client.on('guildBanRemove', async (ban) => {
+  logActivity('🔓 Member Unbanned', `**User:** ${ban.user.tag} (${ban.user.id})`, 'Green', null, ban.guild.id);
+});
+
+client.on('guildMemberRemove', async (member) => {
+  logActivity('👋 Member Left', `**User:** ${member.user.tag} (${member.id})\n**Joined At:** ${member.joinedAt ? member.joinedAt.toLocaleDateString() : 'Unknown'}`, 'Red', null, member.guild.id);
+});
+
+client.on('guildMemberAdd', async (member) => {
+  // Alt Account Detection
+  const createdAt = member.user.createdTimestamp;
+  const now = Date.now();
+  const diff = now - createdAt;
+  const daysOld = Math.floor(diff / (1000 * 60 * 60 * 24));
+
+  let alert = "";
+  if (daysOld < 3) {
+    alert = "\n🔴 **Warning:** Account created less than 3 days ago. Possible Alt/Bot.";
+  } else if (daysOld < 30) {
+    alert = "\n⚠️ **Note:** New account (created < 30 days ago).";
+  }
+
+  // We already handle welcome messages elsewhere, this is for security logs
+  if (alert) {
+    logActivity('👤 New Member Suspect', `**User:** ${member.user.tag} (${member.id})\n**Account Age:** ${daysOld} days.${alert}`, 'Orange', null, member.guild.id);
+  }
+});
+
+client.on('guildMemberUpdate', async (oldMember, newMember) => {
+  if (oldMember.nickname !== newMember.nickname) {
+    logActivity('👤 Nickname Changed', `**User:** ${newMember.user.tag}\n**Old:** ${oldMember.nickname || 'None'}\n**New:** ${newMember.nickname || 'None'}`, 'Blue', null, newMember.guild.id);
+  }
+});
+
+client.on('inviteCreate', async (invite) => {
+  logActivity('✉️ Invite Created', `**Creator:** ${invite.inviter?.tag || 'Unknown'}\n**Code:** ${invite.code}\n**Channel:** <#${invite.channelId}>`, 'Blue', null, invite.guild.id);
+});
+
+client.on('channelUpdate', async (oldChannel, newChannel) => {
+  if (oldChannel.type !== ChannelType.GuildText) return; // Focus on text channels for now
+
+  // Check for @everyone permission changes (making channel public/private)
+  const oldPerms = oldChannel.permissionOverwrites.cache.get(oldChannel.guild.id);
+  const newPerms = newChannel.permissionOverwrites.cache.get(newChannel.guild.id);
+
+  // Simple check if specific deny flags changed (ViewChannel = 1024)
+  const viewFlag = PermissionFlagsBits.ViewChannel;
+
+  let oldDeny = oldPerms ? (oldPerms.deny.bitfield & viewFlag) : 0;
+  let newDeny = newPerms ? (newPerms.deny.bitfield & viewFlag) : 0;
+
+  if (oldDeny && !newDeny) {
+    logActivity('🔓 Channel Made Public', `**Channel:** <#${newChannel.id}>\n⚠️ **Alert:** @everyone can now view this channel.`, 'Orange', null, newChannel.guild.id);
+  } else if (!oldDeny && newDeny) {
+    logActivity('🔒 Channel Made Private', `**Channel:** <#${newChannel.id}>\nInfo: @everyone can no longer view this channel.`, 'Blue', null, newChannel.guild.id);
+  }
+});
+
 
 startBot();
 
