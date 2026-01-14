@@ -3536,21 +3536,102 @@ client.on('interactionCreate', async interaction => {
 
       // --- LOGS WIZARD ---
     } else if (interaction.customId === 'setup_logs_btn') {
-      const { rows } = await safeQuery('SELECT log_channel_id FROM guild_configs WHERE guild_id = $1', [interaction.guildId]);
+      const { rows } = await safeQuery('SELECT log_channel_id, log_options FROM guild_configs WHERE guild_id = $1', [interaction.guildId]);
       const config = rows[0] || {};
+
+      // Parse log options
+      let logOptions = { tickets: true, purchases: true, giveaways: true, levels: true, moderation: true };
+      try {
+        if (config.log_options) {
+          logOptions = typeof config.log_options === 'string' ? JSON.parse(config.log_options) : config.log_options;
+        }
+      } catch (e) { }
 
       const embed = new EmbedBuilder()
         .setTitle('🛡️ Logging Configuration')
-        .setDescription(`Configure where the bot logs events (tickets, errors, purchases).
+        .setDescription(`Configure where the bot logs events and which events to log.
             
-            **Current Channel:** ${config.log_channel_id ? `<#${config.log_channel_id}>` : 'Not Set'}`)
+            **Log Channel:** ${config.log_channel_id ? `<#${config.log_channel_id}>` : 'Not Set'}
+            
+            **Log Options:**
+            ${logOptions.tickets !== false ? '✅' : '❌'} Tickets (open/close/claim)
+            ${logOptions.purchases !== false ? '✅' : '❌'} Purchases (shop transactions)
+            ${logOptions.giveaways !== false ? '✅' : '❌'} Giveaways (create/end/winners)
+            ${logOptions.levels !== false ? '✅' : '❌'} Level Ups
+            ${logOptions.moderation !== false ? '✅' : '❌'} Moderation (warns/bans)`)
         .setColor('Blue');
 
-      const row = new ActionRowBuilder().addComponents(
+      const row1 = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId('setup_logs_channel_btn').setLabel('Set Channel').setStyle(ButtonStyle.Primary).setEmoji('#️⃣'),
         new ButtonBuilder().setCustomId('setup_back_btn').setLabel('Back').setStyle(ButtonStyle.Secondary).setEmoji('⬅️')
       );
-      await interaction.update({ embeds: [embed], components: [row] });
+
+      const row2 = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId('log_toggle_tickets').setLabel('Tickets').setStyle(logOptions.tickets !== false ? ButtonStyle.Success : ButtonStyle.Secondary).setEmoji('🎫'),
+        new ButtonBuilder().setCustomId('log_toggle_purchases').setLabel('Purchases').setStyle(logOptions.purchases !== false ? ButtonStyle.Success : ButtonStyle.Secondary).setEmoji('🛒'),
+        new ButtonBuilder().setCustomId('log_toggle_giveaways').setLabel('Giveaways').setStyle(logOptions.giveaways !== false ? ButtonStyle.Success : ButtonStyle.Secondary).setEmoji('🎁'),
+        new ButtonBuilder().setCustomId('log_toggle_levels').setLabel('Levels').setStyle(logOptions.levels !== false ? ButtonStyle.Success : ButtonStyle.Secondary).setEmoji('📈'),
+        new ButtonBuilder().setCustomId('log_toggle_moderation').setLabel('Moderation').setStyle(logOptions.moderation !== false ? ButtonStyle.Success : ButtonStyle.Secondary).setEmoji('🔨')
+      );
+
+      await interaction.update({ embeds: [embed], components: [row1, row2] });
+
+    } else if (interaction.customId.startsWith('log_toggle_')) {
+      const option = interaction.customId.replace('log_toggle_', '');
+
+      // Get current options
+      const { rows } = await safeQuery('SELECT log_options FROM guild_configs WHERE guild_id = $1', [interaction.guildId]);
+      let logOptions = { tickets: true, purchases: true, giveaways: true, levels: true, moderation: true };
+      try {
+        if (rows[0]?.log_options) {
+          logOptions = typeof rows[0].log_options === 'string' ? JSON.parse(rows[0].log_options) : rows[0].log_options;
+        }
+      } catch (e) { }
+
+      // Toggle the option
+      logOptions[option] = logOptions[option] === false ? true : false;
+
+      // Save to DB
+      await db.query('INSERT INTO guild_configs (guild_id, log_options) VALUES ($1, $2) ON CONFLICT (guild_id) DO UPDATE SET log_options = $2', [interaction.guildId, JSON.stringify(logOptions)]);
+
+      // Refresh the menu (same as setup_logs_btn)
+      const { rows: configRows } = await safeQuery('SELECT log_channel_id, log_options FROM guild_configs WHERE guild_id = $1', [interaction.guildId]);
+      const config = configRows[0] || {};
+      logOptions = { tickets: true, purchases: true, giveaways: true, levels: true, moderation: true };
+      try {
+        if (config.log_options) {
+          logOptions = typeof config.log_options === 'string' ? JSON.parse(config.log_options) : config.log_options;
+        }
+      } catch (e) { }
+
+      const embed = new EmbedBuilder()
+        .setTitle('🛡️ Logging Configuration')
+        .setDescription(`Configure where the bot logs events and which events to log.
+            
+            **Log Channel:** ${config.log_channel_id ? `<#${config.log_channel_id}>` : 'Not Set'}
+            
+            **Log Options:**
+            ${logOptions.tickets !== false ? '✅' : '❌'} Tickets (open/close/claim)
+            ${logOptions.purchases !== false ? '✅' : '❌'} Purchases (shop transactions)
+            ${logOptions.giveaways !== false ? '✅' : '❌'} Giveaways (create/end/winners)
+            ${logOptions.levels !== false ? '✅' : '❌'} Level Ups
+            ${logOptions.moderation !== false ? '✅' : '❌'} Moderation (warns/bans)`)
+        .setColor('Blue');
+
+      const row1 = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId('setup_logs_channel_btn').setLabel('Set Channel').setStyle(ButtonStyle.Primary).setEmoji('#️⃣'),
+        new ButtonBuilder().setCustomId('setup_back_btn').setLabel('Back').setStyle(ButtonStyle.Secondary).setEmoji('⬅️')
+      );
+
+      const row2 = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId('log_toggle_tickets').setLabel('Tickets').setStyle(logOptions.tickets !== false ? ButtonStyle.Success : ButtonStyle.Secondary).setEmoji('🎫'),
+        new ButtonBuilder().setCustomId('log_toggle_purchases').setLabel('Purchases').setStyle(logOptions.purchases !== false ? ButtonStyle.Success : ButtonStyle.Secondary).setEmoji('🛒'),
+        new ButtonBuilder().setCustomId('log_toggle_giveaways').setLabel('Giveaways').setStyle(logOptions.giveaways !== false ? ButtonStyle.Success : ButtonStyle.Secondary).setEmoji('🎁'),
+        new ButtonBuilder().setCustomId('log_toggle_levels').setLabel('Levels').setStyle(logOptions.levels !== false ? ButtonStyle.Success : ButtonStyle.Secondary).setEmoji('📈'),
+        new ButtonBuilder().setCustomId('log_toggle_moderation').setLabel('Moderation').setStyle(logOptions.moderation !== false ? ButtonStyle.Success : ButtonStyle.Secondary).setEmoji('🔨')
+      );
+
+      await interaction.update({ embeds: [embed], components: [row1, row2] });
 
     } else if (interaction.customId === 'setup_logs_channel_btn') {
       const row = new ActionRowBuilder().addComponents(
@@ -4158,9 +4239,11 @@ client.on('interactionCreate', async interaction => {
 
       await interaction.showModal(modal);
     } else if (interaction.customId.startsWith('join_giveaway_')) {
-      await interaction.deferReply({ flags: [MessageFlags.Ephemeral] }); // Don't delete the message
-    } else {
-      await interaction.deferUpdate(); // Acknowledge the button click immediately
+      await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
+    } else if (interaction.customId.startsWith('confirm_buy_')) {
+      await interaction.deferUpdate();
+    } else if (interaction.customId === 'cancel_buy') {
+      await interaction.deferUpdate();
     }
     if (interaction.customId.startsWith('confirm_buy_')) {
       const [, , resource, costStr, resourceAmountStr] = interaction.customId.split('_');
