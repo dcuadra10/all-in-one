@@ -3540,7 +3540,7 @@ client.on('interactionCreate', async interaction => {
       const config = rows[0] || {};
 
       // Parse log options - defaults all true
-      const defaultOpts = { tickets: true, purchases: true, giveaways: true, levels: true, moderation: true, voice: true, messages: true, members: true, roles: true, commands: true };
+      const defaultOpts = { tickets: true, purchases: true, giveaways: true, levels: true, moderation: true, voice: true, messages: true, members: true, roles: true, commands: true, server: true };
       let logOptions = { ...defaultOpts };
       try {
         if (config.log_options) {
@@ -3559,7 +3559,7 @@ client.on('interactionCreate', async interaction => {
 ${logOptions.tickets !== false ? '✅' : '❌'} Tickets • ${logOptions.purchases !== false ? '✅' : '❌'} Purchases • ${logOptions.giveaways !== false ? '✅' : '❌'} Giveaways
 ${logOptions.levels !== false ? '✅' : '❌'} Levels • ${logOptions.moderation !== false ? '✅' : '❌'} Moderation • ${logOptions.voice !== false ? '✅' : '❌'} Voice
 ${logOptions.messages !== false ? '✅' : '❌'} Messages • ${logOptions.members !== false ? '✅' : '❌'} Members • ${logOptions.roles !== false ? '✅' : '❌'} Roles
-${logOptions.commands !== false ? '✅' : '❌'} Commands`)
+${logOptions.commands !== false ? '✅' : '❌'} Commands • ${logOptions.server !== false ? '✅' : '❌'} Server Changes`)
         .setColor('Blue');
 
       const row1 = new ActionRowBuilder().addComponents(
@@ -3580,17 +3580,21 @@ ${logOptions.commands !== false ? '✅' : '❌'} Commands`)
         new ButtonBuilder().setCustomId('log_toggle_messages').setLabel('Messages').setStyle(logOptions.messages !== false ? ButtonStyle.Success : ButtonStyle.Secondary).setEmoji('💬'),
         new ButtonBuilder().setCustomId('log_toggle_members').setLabel('Members').setStyle(logOptions.members !== false ? ButtonStyle.Success : ButtonStyle.Secondary).setEmoji('👤'),
         new ButtonBuilder().setCustomId('log_toggle_roles').setLabel('Roles').setStyle(logOptions.roles !== false ? ButtonStyle.Success : ButtonStyle.Secondary).setEmoji('🏷️'),
+        new ButtonBuilder().setCustomId('log_toggle_server').setLabel('Server').setStyle(logOptions.server !== false ? ButtonStyle.Success : ButtonStyle.Secondary).setEmoji('🏠')
+      );
+
+      const row4 = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId('log_toggle_commands').setLabel('Commands').setStyle(logOptions.commands !== false ? ButtonStyle.Success : ButtonStyle.Secondary).setEmoji('⚙️')
       );
 
-      await interaction.update({ embeds: [embed], components: [row1, row2, row3] });
+      await interaction.update({ embeds: [embed], components: [row1, row2, row3, row4] });
 
     } else if (interaction.customId.startsWith('log_toggle_')) {
       const option = interaction.customId.replace('log_toggle_', '');
 
       // Get current options
       const { rows } = await safeQuery('SELECT log_options FROM guild_configs WHERE guild_id = $1', [interaction.guildId]);
-      const defaultOpts = { tickets: true, purchases: true, giveaways: true, levels: true, moderation: true, voice: true, messages: true, members: true, roles: true, commands: true };
+      const defaultOpts = { tickets: true, purchases: true, giveaways: true, levels: true, moderation: true, voice: true, messages: true, members: true, roles: true, commands: true, server: true };
       let logOptions = { ...defaultOpts };
       try {
         if (rows[0]?.log_options) {
@@ -3626,7 +3630,7 @@ ${logOptions.commands !== false ? '✅' : '❌'} Commands`)
 ${logOptions.tickets !== false ? '✅' : '❌'} Tickets • ${logOptions.purchases !== false ? '✅' : '❌'} Purchases • ${logOptions.giveaways !== false ? '✅' : '❌'} Giveaways
 ${logOptions.levels !== false ? '✅' : '❌'} Levels • ${logOptions.moderation !== false ? '✅' : '❌'} Moderation • ${logOptions.voice !== false ? '✅' : '❌'} Voice
 ${logOptions.messages !== false ? '✅' : '❌'} Messages • ${logOptions.members !== false ? '✅' : '❌'} Members • ${logOptions.roles !== false ? '✅' : '❌'} Roles
-${logOptions.commands !== false ? '✅' : '❌'} Commands`)
+${logOptions.commands !== false ? '✅' : '❌'} Commands • ${logOptions.server !== false ? '✅' : '❌'} Server Changes`)
         .setColor('Blue');
 
       const row1 = new ActionRowBuilder().addComponents(
@@ -3647,10 +3651,14 @@ ${logOptions.commands !== false ? '✅' : '❌'} Commands`)
         new ButtonBuilder().setCustomId('log_toggle_messages').setLabel('Messages').setStyle(logOptions.messages !== false ? ButtonStyle.Success : ButtonStyle.Secondary).setEmoji('💬'),
         new ButtonBuilder().setCustomId('log_toggle_members').setLabel('Members').setStyle(logOptions.members !== false ? ButtonStyle.Success : ButtonStyle.Secondary).setEmoji('👤'),
         new ButtonBuilder().setCustomId('log_toggle_roles').setLabel('Roles').setStyle(logOptions.roles !== false ? ButtonStyle.Success : ButtonStyle.Secondary).setEmoji('🏷️'),
+        new ButtonBuilder().setCustomId('log_toggle_server').setLabel('Server').setStyle(logOptions.server !== false ? ButtonStyle.Success : ButtonStyle.Secondary).setEmoji('🏠')
+      );
+
+      const row4 = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId('log_toggle_commands').setLabel('Commands').setStyle(logOptions.commands !== false ? ButtonStyle.Success : ButtonStyle.Secondary).setEmoji('⚙️')
       );
 
-      await interaction.update({ embeds: [embed], components: [row1, row2, row3] });
+      await interaction.update({ embeds: [embed], components: [row1, row2, row3, row4] });
 
     } else if (interaction.customId === 'setup_logs_channel_btn') {
       const row = new ActionRowBuilder().addComponents(
