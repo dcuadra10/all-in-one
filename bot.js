@@ -2661,7 +2661,7 @@ client.on('interactionCreate', async interaction => {
       const message = interaction.fields.getTextInputValue('msg_content');
       await db.query('INSERT INTO guild_configs (guild_id) VALUES ($1) ON CONFLICT (guild_id) DO NOTHING', [interaction.guildId]);
       await db.query('UPDATE guild_configs SET welcome_message = $1 WHERE guild_id = $2', [message, interaction.guildId]);
-      await interaction.update({ content: '✅ Welcome message updated!', components: [] });
+
       // Re-render welcome menu
       const { rows } = await safeQuery('SELECT * FROM guild_configs WHERE guild_id = $1', [interaction.guildId]);
       const config = rows[0] || {};
@@ -2686,12 +2686,13 @@ client.on('interactionCreate', async interaction => {
         new ButtonBuilder().setCustomId('setup_welcome_image_btn').setLabel('Set Image URL').setStyle(ButtonStyle.Secondary).setEmoji('🖼️'),
         new ButtonBuilder().setCustomId('setup_back_btn').setLabel('Back').setStyle(ButtonStyle.Secondary).setEmoji('⬅️')
       );
-      await interaction.message.edit({ embeds: [embed], components: [row1, row2] });
+      await interaction.update({ embeds: [embed], components: [row1, row2] });
+
     } else if (interaction.customId === 'modal_setup_welcome_image') {
       const imageUrl = interaction.fields.getTextInputValue('img_url');
       await db.query('INSERT INTO guild_configs (guild_id) VALUES ($1) ON CONFLICT (guild_id) DO NOTHING', [interaction.guildId]);
       await db.query('UPDATE guild_configs SET welcome_image_url = $1 WHERE guild_id = $2', [imageUrl || null, interaction.guildId]);
-      await interaction.update({ content: `✅ Welcome image URL updated to: ${imageUrl || 'None'}`, components: [] });
+
       // Re-render welcome menu
       const { rows } = await safeQuery('SELECT * FROM guild_configs WHERE guild_id = $1', [interaction.guildId]);
       const config = rows[0] || {};
@@ -2716,7 +2717,7 @@ client.on('interactionCreate', async interaction => {
         new ButtonBuilder().setCustomId('setup_welcome_image_btn').setLabel('Set Image URL').setStyle(ButtonStyle.Secondary).setEmoji('🖼️'),
         new ButtonBuilder().setCustomId('setup_back_btn').setLabel('Back').setStyle(ButtonStyle.Secondary).setEmoji('⬅️')
       );
-      await interaction.message.edit({ embeds: [embed], components: [row1, row2] });
+      await interaction.update({ embeds: [embed], components: [row1, row2] });
     } else if (interaction.customId.startsWith('modal_wizard_add_q_')) {
       // CustomID: modal_wizard_add_q_TYPE_CATID
       // TYPE could be 'text', 'file', 'dropdown'
