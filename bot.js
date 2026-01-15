@@ -2613,11 +2613,50 @@ client.on('interactionCreate', async interaction => {
       }
       // Clean up the selection message
       try { await interaction.message.delete(); } catch (e) { }
+    } else if (interaction.customId === 'select_levels_remove_reward') {
+      const rewardId = interaction.values[0];
+      await db.query('DELETE FROM level_rewards WHERE id = $1', [rewardId]);
+      await interaction.update({ content: '✅ Reward removed.', components: [] });
+
     } else {
       console.log(`[Select Menu] Unknown Custom ID: '${interaction.customId}'`);
       if (!interaction.replied && !interaction.deferred) {
         await interaction.reply({ content: `❌ Menu handler not found for ID: \`${interaction.customId}\`.`, ephemeral: true });
       }
+    }
+  }
+
+
+  if (interaction.isChannelSelectMenu() || interaction.isRoleSelectMenu()) {
+    if (interaction.customId === 'select_logs_channel') {
+      const channelId = interaction.values[0];
+      await db.query('INSERT INTO guild_configs (guild_id, log_channel_id) VALUES ($1, $2) ON CONFLICT (guild_id) DO UPDATE SET log_channel_id = $2', [interaction.guildId, channelId]);
+      await interaction.update({ content: `✅ Log channel set to <#${channelId}>`, components: [] });
+
+    } else if (interaction.customId === 'select_admin_role') {
+      const roleId = interaction.values[0];
+      await db.query('INSERT INTO guild_configs (guild_id, admin_role_id) VALUES ($1, $2) ON CONFLICT (guild_id) DO UPDATE SET admin_role_id = $2', [interaction.guildId, roleId]);
+      await interaction.update({ content: `✅ Admin role set to <@&${roleId}>`, components: [] });
+
+    } else if (interaction.customId === 'select_giveaway_role') {
+      const roleId = interaction.values[0];
+      await db.query('INSERT INTO guild_configs (guild_id, giveaway_role_id) VALUES ($1, $2) ON CONFLICT (guild_id) DO UPDATE SET giveaway_role_id = $2', [interaction.guildId, roleId]);
+      await interaction.update({ content: `✅ Giveaway ping role set to <@&${roleId}>`, components: [] });
+
+    } else if (interaction.customId === 'select_levels_channel') {
+      const channelId = interaction.values[0];
+      await db.query('INSERT INTO guild_configs (guild_id, level_up_channel_id) VALUES ($1, $2) ON CONFLICT (guild_id) DO UPDATE SET level_up_channel_id = $2', [interaction.guildId, channelId]);
+      await interaction.update({ content: `✅ Level up channel set to <#${channelId}>`, components: [] });
+
+    } else if (interaction.customId === 'select_welcome_channel') {
+      const channelId = interaction.values[0];
+      await db.query('INSERT INTO guild_configs (guild_id, welcome_channel_id) VALUES ($1, $2) ON CONFLICT (guild_id) DO UPDATE SET welcome_channel_id = $2', [interaction.guildId, channelId]);
+      await interaction.update({ content: `✅ Welcome channel set to <#${channelId}>`, components: [] });
+
+    } else if (interaction.customId === 'select_welcome_autorole') {
+      const roleId = interaction.values[0];
+      await db.query('INSERT INTO guild_configs (guild_id, auto_role_id) VALUES ($1, $2) ON CONFLICT (guild_id) DO UPDATE SET auto_role_id = $2', [interaction.guildId, roleId]);
+      await interaction.update({ content: `✅ Auto-role set to <@&${roleId}>`, components: [] });
     }
   }
 
@@ -3976,41 +4015,7 @@ ${logOptions.commands !== false ? '✅' : '❌'} Commands • ${logOptions.serve
       ));
       await interaction.showModal(modal);
 
-      // --- SETUP WIZARD SELECT HANDLERS ---
-    } else if (interaction.customId === 'select_logs_channel') {
-      const channelId = interaction.values[0];
-      await db.query('INSERT INTO guild_configs (guild_id, log_channel_id) VALUES ($1, $2) ON CONFLICT (guild_id) DO UPDATE SET log_channel_id = $2', [interaction.guildId, channelId]);
-      await interaction.update({ content: `✅ Log channel set to <#${channelId}>`, components: [] });
 
-    } else if (interaction.customId === 'select_admin_role') {
-      const roleId = interaction.values[0];
-      await db.query('INSERT INTO guild_configs (guild_id, admin_role_id) VALUES ($1, $2) ON CONFLICT (guild_id) DO UPDATE SET admin_role_id = $2', [interaction.guildId, roleId]);
-      await interaction.update({ content: `✅ Admin role set to <@&${roleId}>`, components: [] });
-
-    } else if (interaction.customId === 'select_giveaway_role') {
-      const roleId = interaction.values[0];
-      await db.query('INSERT INTO guild_configs (guild_id, giveaway_role_id) VALUES ($1, $2) ON CONFLICT (guild_id) DO UPDATE SET giveaway_role_id = $2', [interaction.guildId, roleId]);
-      await interaction.update({ content: `✅ Giveaway ping role set to <@&${roleId}>`, components: [] });
-
-    } else if (interaction.customId === 'select_levels_channel') {
-      const channelId = interaction.values[0];
-      await db.query('INSERT INTO guild_configs (guild_id, level_up_channel_id) VALUES ($1, $2) ON CONFLICT (guild_id) DO UPDATE SET level_up_channel_id = $2', [interaction.guildId, channelId]);
-      await interaction.update({ content: `✅ Level up channel set to <#${channelId}>`, components: [] });
-
-    } else if (interaction.customId === 'select_welcome_channel') {
-      const channelId = interaction.values[0];
-      await db.query('INSERT INTO guild_configs (guild_id, welcome_channel_id) VALUES ($1, $2) ON CONFLICT (guild_id) DO UPDATE SET welcome_channel_id = $2', [interaction.guildId, channelId]);
-      await interaction.update({ content: `✅ Welcome channel set to <#${channelId}>`, components: [] });
-
-    } else if (interaction.customId === 'select_welcome_autorole') {
-      const roleId = interaction.values[0];
-      await db.query('INSERT INTO guild_configs (guild_id, auto_role_id) VALUES ($1, $2) ON CONFLICT (guild_id) DO UPDATE SET auto_role_id = $2', [interaction.guildId, roleId]);
-      await interaction.update({ content: `✅ Auto-role set to <@&${roleId}>`, components: [] });
-
-    } else if (interaction.customId === 'select_levels_remove_reward') {
-      const rewardId = interaction.values[0];
-      await db.query('DELETE FROM level_rewards WHERE id = $1', [rewardId]);
-      await interaction.update({ content: '✅ Reward removed.', components: [] });
 
     } else if (interaction.customId === 'wizard_create_cat_btn') {
       const modal = new ModalBuilder().setCustomId('modal_wizard_cat').setTitle('Create Ticket Category');
