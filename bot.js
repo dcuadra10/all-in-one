@@ -3643,6 +3643,46 @@ client.on('interactionCreate', async interaction => {
       );
       await interaction.showModal(modal);
 
+    } else if (interaction.customId === 'modal_add_ticket_cat') {
+      const name = interaction.fields.getTextInputValue('cat_name');
+      const emoji = interaction.fields.getTextInputValue('cat_emoji'); // Store custom emoji string directly
+
+      await db.query('INSERT INTO ticket_categories (guild_id, name, emoji) VALUES ($1, $2, $3)', [interaction.guildId, name, emoji]);
+
+      // Refresh list
+      // Simulate click on setup_tickets_btn logic
+      const { rows: configRows } = await safeQuery('SELECT ticket_mode, ticket_parent_id FROM guild_configs WHERE guild_id = $1', [interaction.guildId]);
+      const config = configRows[0] || {};
+      const { rows: catRows } = await safeQuery('SELECT * FROM ticket_categories WHERE guild_id = $1', [interaction.guildId]);
+
+      const categoriesList = catRows.length > 0 ? catRows.map(c => `${c.emoji} **${c.name}**`).join('\n') : 'No categories configured.';
+      const ticketMode = config.ticket_mode === 'channels' ? 'Channels 📁' : 'Threads 🧵';
+
+      const embed = new EmbedBuilder()
+        .setTitle('🎫 Ticket System Dashboard')
+        .setDescription(`Manage your ticket system settings and panels.
+         
+         **Ticket Mode:** ${ticketMode}
+         ${config.ticket_mode === 'channels' ? `**Ticket Category:** ${config.ticket_parent_id ? `<#${config.ticket_parent_id}>` : 'Not Set'}` : ''}
+         
+         **Global Categories:**
+         ${categoriesList}`)
+        .setColor('Blue');
+
+      const row1 = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId('setup_tickets_panels_btn').setLabel('Manage Panels').setStyle(ButtonStyle.Primary).setEmoji('🖥️'),
+        new ButtonBuilder().setCustomId('setup_tickets_mode_btn').setLabel('Switch Mode').setStyle(ButtonStyle.Secondary).setEmoji('📦'),
+        new ButtonBuilder().setCustomId('setup_tickets_parent_btn').setLabel('Set Parent Category').setStyle(ButtonStyle.Secondary).setEmoji('📂').setDisabled(config.ticket_mode !== 'channels'),
+      );
+
+      const row2 = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId('setup_tickets_add_cat_btn').setLabel('Add Category').setStyle(ButtonStyle.Success).setEmoji('➕'),
+        new ButtonBuilder().setCustomId('setup_tickets_del_cat_btn').setLabel('Remove Category').setStyle(ButtonStyle.Danger).setEmoji('🗑️'),
+        new ButtonBuilder().setCustomId('setup_back_btn').setLabel('Back').setStyle(ButtonStyle.Secondary).setEmoji('⬅️')
+      );
+
+      await interaction.update({ embeds: [embed], components: [row1, row2] });
+
 
 
     } else if (interaction.customId === 'setup_tickets_del_cat_btn') {
@@ -3709,13 +3749,24 @@ client.on('interactionCreate', async interaction => {
 
     } else if (interaction.customId.startsWith('panel_set_channel_')) {
       const panelId = interaction.customId.replace('panel_set_channel_', '');
-      const row = new ActionRowBuilder().addComponents(
-        new ChannelSelectMenuBuilder()
-          .setCustomId(`select_panel_channel_${panelId}`)
-          .setPlaceholder('Select Panel Channel')
-          .setChannelTypes([ChannelType.GuildText])
-      );
-      await interaction.reply({ content: 'Select the channel where this panel will be sent:', components: [row], ephemeral: true });
+      const modal = new ModalBuilder().setCustomId(`modal_panel_channel_${panelId}`).setTitle('Set Panel Channel');
+      modal.addComponents(new ActionRowBuilder().addComponents(
+        new TextInputBuilder().setCustomId('channel_id').setLabel('Channel ID').setStyle(TextInputStyle.Short).setPlaceholder('123456789012345678').setRequired(true)
+      ));
+      await interaction.showModal(modal);
+
+    } else if (interaction.customId.startsWith('modal_panel_channel_')) {
+      const panelId = interaction.customId.replace('modal_panel_channel_', '');
+      const channelId = interaction.fields.getTextInputValue('channel_id');
+
+      // Validate
+      const channel = interaction.guild.channels.cache.get(channelId);
+      if (!channel || !channel.isTextBased()) {
+        return interaction.reply({ content: `❌ Invalid channel ID or channel is not text-based.`, ephemeral: true });
+      }
+
+      await db.query('UPDATE ticket_panels_v2 SET channel_id = $1 WHERE id = $2', [channelId, panelId]);
+      await interaction.reply({ content: `✅ Panel channel set to <#${channelId}>.`, ephemeral: true });
 
     } else if (interaction.customId.startsWith('select_panel_channel_')) {
       const panelId = interaction.customId.replace('select_panel_channel_', '');
