@@ -3689,52 +3689,59 @@ client.on('interactionCreate', async interaction => {
       await interaction.showModal(modal);
 
     } else if (interaction.customId === 'modal_add_ticket_cat') {
-      const name = interaction.fields.getTextInputValue('cat_name');
-      const emoji = interaction.fields.getTextInputValue('cat_emoji'); // Store custom emoji string directly
+      await interaction.deferUpdate();
+      try {
+        const name = interaction.fields.getTextInputValue('cat_name');
+        const emoji = interaction.fields.getTextInputValue('cat_emoji');
 
-      await db.query('INSERT INTO ticket_categories (guild_id, name, emoji) VALUES ($1, $2, $3)', [interaction.guildId, name, emoji]);
+        await db.query('INSERT INTO ticket_categories (guild_id, name, emoji) VALUES ($1, $2, $3)', [interaction.guildId, name, emoji]);
 
-      // Refresh list
-      // Simulate click on setup_tickets_btn logic
-      const { rows: configRows } = await safeQuery('SELECT ticket_mode, ticket_parent_id FROM guild_configs WHERE guild_id = $1', [interaction.guildId]);
-      const config = configRows[0] || {};
-      const { rows: catRows } = await safeQuery('SELECT * FROM ticket_categories WHERE guild_id = $1', [interaction.guildId]);
+        const { rows: configRows } = await safeQuery('SELECT ticket_mode, ticket_parent_id FROM guild_configs WHERE guild_id = $1', [interaction.guildId]);
+        const config = configRows[0] || {};
+        const { rows: catRows } = await safeQuery('SELECT * FROM ticket_categories WHERE guild_id = $1', [interaction.guildId]);
 
-      const categoriesList = catRows.length > 0 ? catRows.map(c => `${c.emoji} **${c.name}**`).join('\n') : 'No categories configured.';
-      const ticketMode = config.ticket_mode === 'channels' ? 'Channels 📁' : 'Threads 🧵';
+        const categoriesList = catRows.length > 0 ? catRows.map(c => `${c.emoji} **${c.name}**`).join('\n') : 'No categories configured.';
+        const ticketMode = config.ticket_mode === 'channels' ? 'Channels 📁' : 'Threads 🧵';
 
-      const embed = new EmbedBuilder()
-        .setTitle('🎫 Ticket System Dashboard')
-        .setDescription(`Manage your ticket system settings and panels.
-         
-         **Ticket Mode:** ${ticketMode}
-         ${config.ticket_mode === 'channels' ? `**Ticket Category:** ${config.ticket_parent_id ? `<#${config.ticket_parent_id}>` : 'Not Set'}` : ''}
-         
-         **Global Categories:**
-         ${categoriesList}`)
-        .setColor('Blue');
+        const embed = new EmbedBuilder()
+          .setTitle('🎫 Ticket System Dashboard')
+          .setDescription(`Manage your ticket system settings and panels.
+           
+           **Ticket Mode:** ${ticketMode}
+           ${config.ticket_mode === 'channels' ? `**Ticket Category:** ${config.ticket_parent_id ? `<#${config.ticket_parent_id}>` : 'Not Set'}` : ''}
+           
+           **Global Categories:**
+           ${categoriesList}`)
+          .setColor('Blue');
 
-      const row1 = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId('setup_tickets_panels_btn').setLabel('Manage Panels').setStyle(ButtonStyle.Primary).setEmoji('🖥️'),
-        new ButtonBuilder().setCustomId('setup_tickets_mode_btn').setLabel('Switch Mode').setStyle(ButtonStyle.Secondary).setEmoji('📦'),
-        new ButtonBuilder().setCustomId('setup_tickets_parent_btn').setLabel('Set Parent Category').setStyle(ButtonStyle.Secondary).setEmoji('📂').setDisabled(config.ticket_mode !== 'channels'),
-      );
+        const row1 = new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId('setup_tickets_panels_btn').setLabel('Manage Panels').setStyle(ButtonStyle.Primary).setEmoji('🖥️'),
+          new ButtonBuilder().setCustomId('setup_tickets_mode_btn').setLabel('Switch Mode').setStyle(ButtonStyle.Secondary).setEmoji('📦'),
+          new ButtonBuilder().setCustomId('setup_tickets_parent_btn').setLabel('Set Parent Category').setStyle(ButtonStyle.Secondary).setEmoji('📂').setDisabled(config.ticket_mode !== 'channels'),
+        );
 
-      const row2 = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId('setup_tickets_add_cat_btn').setLabel('Add Category').setStyle(ButtonStyle.Success).setEmoji('➕'),
-        new ButtonBuilder().setCustomId('setup_tickets_del_cat_btn').setLabel('Remove Category').setStyle(ButtonStyle.Danger).setEmoji('🗑️'),
-        new ButtonBuilder().setCustomId('setup_back_btn').setLabel('Back').setStyle(ButtonStyle.Secondary).setEmoji('⬅️')
-      );
+        const row2 = new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId('setup_tickets_add_cat_btn').setLabel('Add Category').setStyle(ButtonStyle.Success).setEmoji('➕'),
+          new ButtonBuilder().setCustomId('setup_tickets_del_cat_btn').setLabel('Remove Category').setStyle(ButtonStyle.Danger).setEmoji('🗑️'),
+          new ButtonBuilder().setCustomId('setup_back_btn').setLabel('Back').setStyle(ButtonStyle.Secondary).setEmoji('⬅️')
+        );
 
-      await interaction.update({ embeds: [embed], components: [row1, row2] });
+        await interaction.editReply({ embeds: [embed], components: [row1, row2] });
 
-
+      } catch (error) {
+        console.error('Error adding ticket category:', error);
+        await interaction.followUp({ content: '❌ Failed to add category. Please check your emoji format or database connection.', ephemeral: true });
+      }
 
     } else if (interaction.customId === 'setup_tickets_del_cat_btn') {
       const { rows: catRows } = await safeQuery('SELECT * FROM ticket_categories WHERE guild_id = $1', [interaction.guildId]);
       if (catRows.length === 0) return interaction.reply({ content: 'No categories to remove.', ephemeral: true });
 
-      const options = catRows.map(c => new StringSelectMenuOptionBuilder().setLabel(c.name).setValue(c.id.toString()).setEmoji(c.emoji));
+      const options = catRows.map(c => new StringSelectMenuOptionBuilder()
+        .setLabel(c.name)
+        .setValue(c.id.toString())
+        .setEmoji(parseEmoji(c.emoji)) // Use helper to handle custom emoji strings
+      );
       const row = new ActionRowBuilder().addComponents(
         new StringSelectMenuBuilder().setCustomId('select_del_ticket_cat').setPlaceholder('Select category to remove').addOptions(options)
       );
