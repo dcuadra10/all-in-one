@@ -3634,69 +3634,11 @@ client.on('interactionCreate', async interaction => {
       }
 
     } else if (interaction.customId === 'setup_tickets_add_cat_btn') {
-      const { rows } = await safeQuery('SELECT ticket_panel_title, ticket_panel_description, ticket_panel_image_url, ticket_panel_thumbnail_url, ticket_panel_color FROM guild_configs WHERE guild_id = $1', [interaction.guildId]);
-      const config = rows[0] || {};
-
-      const embed = new EmbedBuilder()
-        .setTitle('🎨 Ticket Panel Customization')
-        .setDescription(`Customize the appearance of your ticket panel.
-        
-        **Title:** ${config.ticket_panel_title || 'Default'}
-        **Description:** ${config.ticket_panel_description ? (config.ticket_panel_description.length > 50 ? config.ticket_panel_description.substring(0, 50) + '...' : config.ticket_panel_description) : 'Default'}
-        **Color:** ${config.ticket_panel_color || 'Default'}
-        **Image:** ${config.ticket_panel_image_url ? 'Set' : 'None'}
-        **Thumbnail:** ${config.ticket_panel_thumbnail_url ? 'Set' : 'None'}`)
-        .setColor(config.ticket_panel_color || 'Blue');
-
-      if (config.ticket_panel_image_url) embed.setImage(config.ticket_panel_image_url);
-      if (config.ticket_panel_thumbnail_url) embed.setThumbnail(config.ticket_panel_thumbnail_url);
-
-      const row1 = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId('setup_tickets_set_title').setLabel('Set Title').setStyle(ButtonStyle.Secondary).setEmoji('📝'),
-        new ButtonBuilder().setCustomId('setup_tickets_set_desc').setLabel('Set Description').setStyle(ButtonStyle.Secondary).setEmoji('📄'),
-        new ButtonBuilder().setCustomId('setup_tickets_set_color').setLabel('Set Color').setStyle(ButtonStyle.Secondary).setEmoji('🎨')
+      const modal = new ModalBuilder().setCustomId('modal_add_ticket_cat').setTitle('Add Ticket Category');
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('cat_name').setLabel('Category Name').setStyle(TextInputStyle.Short).setRequired(true)),
+        new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('cat_emoji').setLabel('Emoji').setStyle(TextInputStyle.Short).setPlaceholder('e.g. 🎫').setRequired(true))
       );
-      const row2 = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId('setup_tickets_set_image').setLabel('Set Image').setStyle(ButtonStyle.Secondary).setEmoji('🖼️'),
-        new ButtonBuilder().setCustomId('setup_tickets_set_thumb').setLabel('Set Thumbnail').setStyle(ButtonStyle.Secondary).setEmoji('📌'),
-        new ButtonBuilder().setCustomId('setup_tickets_btn').setLabel('Back').setStyle(ButtonStyle.Secondary).setEmoji('⬅️')
-      );
-
-      await interaction.update({ embeds: [embed], components: [row1, row2] });
-
-    } else if (interaction.customId === 'setup_tickets_set_title') {
-      const modal = new ModalBuilder().setCustomId('modal_setup_tickets_title').setTitle('Set Panel Title');
-      modal.addComponents(new ActionRowBuilder().addComponents(
-        new TextInputBuilder().setCustomId('title_input').setLabel('Title').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(256)
-      ));
-      await interaction.showModal(modal);
-
-    } else if (interaction.customId === 'setup_tickets_set_desc') {
-      const modal = new ModalBuilder().setCustomId('modal_setup_tickets_desc').setTitle('Set Panel Description');
-      modal.addComponents(new ActionRowBuilder().addComponents(
-        new TextInputBuilder().setCustomId('desc_input').setLabel('Description').setStyle(TextInputStyle.Paragraph).setRequired(true).setMaxLength(4000)
-      ));
-      await interaction.showModal(modal);
-
-    } else if (interaction.customId === 'setup_tickets_set_image') {
-      const modal = new ModalBuilder().setCustomId('modal_setup_tickets_image').setTitle('Set Panel Image');
-      modal.addComponents(new ActionRowBuilder().addComponents(
-        new TextInputBuilder().setCustomId('image_input').setLabel('Image URL').setStyle(TextInputStyle.Short).setPlaceholder('https://...').setRequired(false)
-      ));
-      await interaction.showModal(modal);
-
-    } else if (interaction.customId === 'setup_tickets_set_thumb') {
-      const modal = new ModalBuilder().setCustomId('modal_setup_tickets_thumb').setTitle('Set Panel Thumbnail');
-      modal.addComponents(new ActionRowBuilder().addComponents(
-        new TextInputBuilder().setCustomId('thumb_input').setLabel('Thumbnail URL').setStyle(TextInputStyle.Short).setPlaceholder('https://...').setRequired(false)
-      ));
-      await interaction.showModal(modal);
-
-    } else if (interaction.customId === 'setup_tickets_set_color') {
-      const modal = new ModalBuilder().setCustomId('modal_setup_tickets_color').setTitle('Set Panel Color');
-      modal.addComponents(new ActionRowBuilder().addComponents(
-        new TextInputBuilder().setCustomId('color_input').setLabel('Color').setStyle(TextInputStyle.Short).setPlaceholder('Hex (#FF0000) or Name (Blue)').setRequired(true)
-      ));
       await interaction.showModal(modal);
 
     } else if (interaction.customId === 'setup_tickets_add_cat_btn') {
@@ -5533,7 +5475,7 @@ async function sendTicketPanel(guild, panelId) {
         .addOptions(categories.map(c => ({
           label: c.name,
           value: c.id.toString(),
-          emoji: c.emoji,
+          emoji: parseEmoji(c.emoji),
           description: `Open a ${c.name} ticket`
         })));
       components.push(new ActionRowBuilder().addComponents(select));
@@ -5550,7 +5492,7 @@ async function sendTicketPanel(guild, panelId) {
             .setCustomId(`create_ticket_${cat.id}`)
             .setLabel(cat.name)
             .setStyle(ButtonStyle.Primary)
-            .setEmoji(cat.emoji)
+            .setEmoji(parseEmoji(cat.emoji))
         );
       });
       if (currentRow.components.length > 0) components.push(currentRow);
@@ -5576,4 +5518,17 @@ async function sendTicketPanel(guild, panelId) {
   } catch (err) {
     console.error('Error sending ticket panel:', err);
   }
+}
+
+
+// Helper to parse emoji string for Discord components
+function parseEmoji(emoji) {
+  if (!emoji) return null;
+  // Check if it's a custom emoji: <:name:id> or <a:name:id>
+  const customEmojiRegex = /<(a?):(\w+):(\d+)>/;
+  const match = emoji.match(customEmojiRegex);
+  if (match) {
+    return match[3]; // Return the ID
+  }
+  return emoji; // Return unicode
 }
