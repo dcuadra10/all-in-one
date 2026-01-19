@@ -3427,7 +3427,7 @@ client.on('interactionCreate', async interaction => {
         }
       }, 5000);
     }
-  } else if (interaction.isButton()) { // Handle Button Clicks
+  } else if (interaction.isButton() || interaction.isModalSubmit()) { // Handle Button Clicks & Modals
     // --- TICKET CREATION BUTTONS ---
     if (interaction.customId.startsWith('create_ticket_')) {
       const catId = interaction.customId.replace('create_ticket_', '');
