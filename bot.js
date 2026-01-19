@@ -1869,6 +1869,8 @@ client.on('interactionCreate', async interaction => {
         return interaction.reply({ content: '❌ You need Administrator permissions to use this.', ephemeral: true });
       }
 
+      await interaction.deferReply({ ephemeral: true });
+
       const embed = new EmbedBuilder()
         .setTitle('🛠️ ALL in One Configuration')
         .setDescription('Select a module to configure for this server.')
@@ -1894,7 +1896,7 @@ client.on('interactionCreate', async interaction => {
         new ButtonBuilder().setCustomId('setup_close_btn').setLabel('Close').setStyle(ButtonStyle.Danger).setEmoji('❌')
       );
 
-      await interaction.reply({ embeds: [embed], components: [row1, row2], ephemeral: true });
+      await interaction.editReply({ embeds: [embed], components: [row1, row2] });
 
     } else if (commandName === 'reset-all') {
       await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
