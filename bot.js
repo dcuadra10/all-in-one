@@ -1542,8 +1542,9 @@ client.on('interactionCreate', async interaction => {
     } else if (commandName === 'ticket-setup') {
       await interaction.deferReply({ ephemeral: true });
 
-      const adminIds = (process.env.ADMIN_IDS || '').split(',');
-      if (!adminIds.includes(interaction.user.id)) {
+      const { rows: configRows } = await safeQuery('SELECT admin_role_id FROM guild_configs WHERE guild_id = $1', [interaction.guildId]);
+      const adminRole = configRows[0]?.admin_role_id;
+      if (!hasAdminPermission(interaction.member) && !(adminRole && interaction.member.roles.cache.has(adminRole))) {
         return await interaction.editReply({ content: '🚫 You do not have permission to use this command.' });
       }
 
@@ -1599,8 +1600,9 @@ client.on('interactionCreate', async interaction => {
       await interaction.editReply({ content: `✅ Ticket panel created in ${channel}.` });
 
     } else if (commandName === 'ticket-category') {
-      const adminIds = (process.env.ADMIN_IDS || '').split(',');
-      if (!adminIds.includes(interaction.user.id)) {
+      const { rows: configRows } = await safeQuery('SELECT admin_role_id FROM guild_configs WHERE guild_id = $1', [interaction.guildId]);
+      const adminRole = configRows[0]?.admin_role_id;
+      if (!hasAdminPermission(interaction.member) && !(adminRole && interaction.member.roles.cache.has(adminRole))) {
         return await interaction.reply({ content: '🚫 You do not have permission to use this command.', ephemeral: true });
       }
 
