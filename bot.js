@@ -3059,11 +3059,14 @@ client.on('interactionCreate', async interaction => {
 
       console.log(`[Ticket Select] Questions to ask: ${parsedQs.length}`);
 
-      // Check for complex questions
-      const hasComplex = parsedQs.some(q => q.type && q.type !== 'text');
+      // Hybrid Flow Logic:
+      // Check if the FIRST batch (0-5) is simple text.
+      // If so, start Modal. If not, start Thread Interview immediately.
+      const firstBatch = parsedQs.slice(0, 5);
+      const startWithModal = !firstBatch.some(q => q.type && q.type !== 'text');
 
-      if (hasComplex) {
-        // Interactive Thread Mode
+      if (!startWithModal) {
+        // Interactive Thread Mode (Immediate)
         await interaction.deferReply({ ephemeral: true });
 
         const guild = interaction.guild;
@@ -3192,20 +3195,21 @@ client.on('interactionCreate', async interaction => {
 
       // Check for next page
       const nextPage = page + 1;
-      if (nextPage < session.totalPages) {
+
+      // Check if next page is viable for Modal (Simple Text)
+      const qStart = nextPage * 5;
+      const qEnd = Math.min((nextPage + 1) * 5, session.questions.length);
+      const nextBatch = session.questions.slice(qStart, qEnd);
+      const nextBatchIsSimple = !nextBatch.some(q => q.type && q.type !== 'text');
+
+      if (nextPage < session.totalPages && nextBatchIsSimple) {
         // Show Next Modal
         const modal = new ModalBuilder()
           .setCustomId(`modal_ticket_submit_${catId}_${nextPage}`)
           .setTitle(`Page ${nextPage + 1}/${session.totalPages}`);
 
-        const qStart = nextPage * 5;
-        const qEnd = Math.min((nextPage + 1) * 5, session.questions.length);
-
-        session.questions.slice(qStart, qEnd).forEach((q, i) => {
-          // i is relative to slice 0..4
-          // but we want unique customId for the field? 
-          // Actually, standard practice across modals is fine to reuse IDs if different modal, 
-          // BUT I used `q_${actualIndex}` in generation.
+        // ... logic to add components ...
+        nextBatch.forEach((q, i) => {
           const actualIndex = qStart + i;
           const qText = typeof q === 'object' ? q.text : q;
           modal.addComponents(new ActionRowBuilder().addComponents(
@@ -3221,6 +3225,18 @@ client.on('interactionCreate', async interaction => {
         await interaction.showModal(modal);
         return; // Done for this specific interaction
       }
+
+      // If we are here, we are either:
+      // 1. Done with all pages.
+      // 2. Switching to Interview Mode because next batch has complex questions.
+
+      // Calculate how many questions we have answered so far
+      // session.answers might have holes if we skipped? No, we fill sequentially.
+      // endIdx is the last index we just processed.
+      const answeredCount = endIdx;
+      const totalQuestions = session.questions.length;
+      const isFullyComplete = answeredCount >= totalQuestions;
+
 
       // If no more pages, CREATE TICKET
       // Fetch category info again for role/emoji
@@ -3257,12 +3273,21 @@ client.on('interactionCreate', async interaction => {
           await ticketChannel.members.add(interaction.user.id);
         }
 
-        await db.query(
-          'INSERT INTO tickets (channel_id, guild_id, user_id, category_id) VALUES ($1, $2, $3, $4)',
-          [ticketChannel.id, guild.id, interaction.user.id, ticketCategory.id]
-        );
+        if (isFullyComplete) {
+          // STANDARD COMPLETION (All questions from Modals)
+          await db.query(
+            'INSERT INTO tickets (channel_id, guild_id, user_id, category_id, answers) VALUES ($1, $2, $3, $4, $5)',
+            [ticketChannel.id, guild.id, interaction.user.id, ticketCategory.id, JSON.stringify(session.answers)]
+          );
+        } else {
+          // HYBRID HANDOFF (Switch to Interview)
+          await db.query(
+            'INSERT INTO tickets (channel_id, guild_id, user_id, category_id, pending_questions, current_question_index, answers) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+            [ticketChannel.id, guild.id, interaction.user.id, ticketCategory.id, JSON.stringify(session.questions), answeredCount, JSON.stringify(session.answers)]
+          );
+        }
 
-        const answerFields = session.answers.map(a => `**${a.question}**\n${a.answer}`).join('\n\n');
+        const answerFields = session.answers.slice(0, answeredCount).map(a => `**${a.question}**\n${a.answer}`).join('\n\n');
 
         const welcomeEmbed = new EmbedBuilder()
           .setTitle(`${ticketCategory.emoji} ${ticketCategory.name} Ticket`)
@@ -3279,6 +3304,24 @@ client.on('interactionCreate', async interaction => {
 
         await ticketChannel.send({ embeds: [welcomeEmbed], components: [closeButtons] });
         await interaction.reply({ content: `✅ Ticket created: <#${ticketChannel.id}>`, ephemeral: true });
+
+        // If Hybrid, trigger next question
+        if (!isFullyComplete) {
+          const nextQ = session.questions[answeredCount]; // The first unanswered question
+          const qText = nextQ.text || nextQ;
+          const qEmbed = new EmbedBuilder().setTitle(`Question ${answeredCount + 1}/${totalQuestions}`).setDescription(qText).setColor('Blue');
+          const components = [];
+          if (nextQ.type === 'dropdown' && nextQ.options) {
+            const select = new StringSelectMenuBuilder()
+              .setCustomId('ticket_interview_dropdown')
+              .setPlaceholder('Select an option...')
+              .addOptions(nextQ.options.map(opt => ({ label: opt, value: opt })));
+            components.push(new ActionRowBuilder().addComponents(select));
+          } else if (nextQ.type === 'file') {
+            qEmbed.setFooter({ text: 'Please upload a file/image as your answer.' });
+          }
+          await ticketChannel.send({ embeds: [qEmbed], components: components });
+        }
 
         // Cleanup Session
         ticketCreationSessions.delete(interaction.user.id);
