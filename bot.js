@@ -1599,10 +1599,9 @@ client.on('interactionCreate', async interaction => {
 
       // Save panel info to update it later
       await db.query(`
-        INSERT INTO ticket_panels (guild_id, channel_id, message_id)
+        INSERT INTO ticket_panels_v2 (guild_id, channel_id, message_id)
         VALUES ($1, $2, $3)
-        ON CONFLICT (guild_id) 
-        DO UPDATE SET channel_id = $2, message_id = $3
+        ON CONFLICT (id) DO NOTHING
       `, [interaction.guildId, channel.id, sentMessage.id]);
 
       await interaction.editReply({ content: `✅ Ticket panel created in ${channel}.` });
@@ -3028,7 +3027,20 @@ client.on('interactionCreate', async interaction => {
         page = 0;
       }
 
-      if (parsedQs.length === 0) parsedQs = [{ text: 'Please describe your request:', type: 'text' }];
+      let parsedQs = [];
+      try {
+        const { rows } = await safeQuery('SELECT form_questions FROM ticket_categories WHERE id = $1', [catId]);
+        if (rows.length > 0 && rows[0].form_questions) {
+          const rawData = rows[0].form_questions;
+          if (typeof rawData === 'string') {
+            parsedQs = JSON.parse(rawData);
+          } else {
+            parsedQs = rawData;
+          }
+        }
+      } catch (e) { console.error('Error fetching questions:', e); }
+
+      if (!parsedQs || parsedQs.length === 0) parsedQs = [{ text: 'Please describe your request:', type: 'text' }];
 
       console.log(`[Ticket Select] Questions to ask: ${parsedQs.length}`);
 
