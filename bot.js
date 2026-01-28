@@ -3063,7 +3063,6 @@ client.on('interactionCreate', async interaction => {
       // Check if the FIRST batch (0-5) is simple text.
       // If so, start Modal. If not, start Thread Interview immediately.
       const firstBatch = parsedQs.slice(0, 5);
-      const firstBatch = parsedQs.slice(0, 5);
       // ONLY 'file' type forces a switch to Interactive Mode immediately.
       // 'dropdown' keys are now supported in Modals.
       const startWithModal = !firstBatch.some(q => q.type === 'file');
