@@ -3190,59 +3190,9 @@ client.on('interactionCreate', async interaction => {
         return;
       }
 
-      // Initialize session (Simple Text Modals)
-      const totalPages = Math.ceil(parsedQs.length / 5);
-      ticketCreationSessions.set(interaction.user.id, {
-        catId: catId,
-        questions: parsedQs,
-        answers: [],
-        totalPages: totalPages
-      });
 
-      // Show first modal (Page 0)
-      const modal = new ModalBuilder()
-        .setCustomId(`modal_ticket_submit_${catId}_0`)
-        .setTitle(`Open Ticket: ${category.name.substring(0, 45)}`);
 
-      parsedQs.slice(0, 5).forEach((q, i) => {
-        const label = q.text || q;
-        const type = q.type || 'text';
 
-        if (type === 'dropdown' && q.options) {
-          // Add Select Menu
-          modal.addComponents(new ActionRowBuilder().addComponents(
-            new StringSelectMenuBuilder()
-              .setCustomId(`q_${i}`)
-              .setPlaceholder(label.substring(0, 100))
-              .addOptions(q.options.map((opt, idx) => ({ label: opt.substring(0, 100), value: opt.substring(0, 100) })))
-          ));
-        } else {
-          // Default Text Input
-          modal.addComponents(new ActionRowBuilder().addComponents(
-            new TextInputBuilder()
-              .setCustomId(`q_${i}`)
-              .setLabel(label.length > 45 ? label.substring(0, 42) + '...' : label)
-              .setPlaceholder(label.substring(0, 100))
-              .setStyle(TextInputStyle.Paragraph)
-              .setRequired(true)
-          ));
-        }
-      });
-
-      await interaction.showModal(modal);
-      // Reset the select menu
-      await interaction.message.edit({ components: interaction.message.components });
-      console.log('[Ticket Select] Modal Page 0 shown.');
-
-      if (!session) {
-        return interaction.reply({ content: '❌ Session expired. Please try again.', ephemeral: true });
-      }
-
-      // Extract answers from this page
-      // Inputs are named q_0, q_1... relative to the slice
-      // But wait... for page 0, indices are 0-4. For page 1, indices are 5-9?
-      // No, usually in modal I'll name them q_0 ... q_4 relative to the modal. 
-      // Let's check how I created them: 
       // .setCustomId(`q_${i}`) where i is the actual index in the big array.
 
       const startIdx = page * 5;
